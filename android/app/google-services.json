@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "93183950336",
+    "project_id": "pharmacy-tracker-d7106",
+    "storage_bucket": "pharmacy-tracker-d7106.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:93183950336:android:377918c81477368461e2e5",
+        "android_client_info": {
+          "package_name": "com.nextwave.pharmacy_tracker"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDzCUjg6LjT62gBE1PjQJiuMNnLDST4gv4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
