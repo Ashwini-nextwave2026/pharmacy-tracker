@@ -13,10 +13,12 @@ import 'expense_page.dart';
 import 'gst_report_page.dart';
 import 'import_stock_page.dart';
 import 'new_sale_page.dart';
+import 'profit_page.dart';
 import 'sale_list_page.dart';
 import 'shop_details_page.dart';
 import 'staff_page.dart';
 import 'supplier_dues_page.dart';
+import 'suppliers_page.dart';
 import 'stock_list_page.dart';
 
 // The home screen, laid out like My Apps:
@@ -41,7 +43,6 @@ class HomePage extends StatelessWidget {
   // A heading (e.g. "Sale") with its row of tiles underneath
   Widget _section(
       BuildContext context, String title, IconData icon, List<_Tile> tiles) {
-    final wide = MediaQuery.of(context).size.width > 700;
     return Padding(
       padding: const EdgeInsets.only(top: 20),
       child: Column(
@@ -59,13 +60,17 @@ class HomePage extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
-          GridView.count(
-            crossAxisCount: wide ? 4 : 3,
+          // Short, fixed-height tiles: as many per row as fit (about 2 on
+          // a phone, 3-5 on a PC), each at most 260 wide and 72 tall
+          GridView(
             shrinkWrap: true, // let the grid sit inside the ListView
             physics: const NeverScrollableScrollPhysics(),
-            crossAxisSpacing: 10,
-            mainAxisSpacing: 10,
-            childAspectRatio: wide ? 1.4 : 0.8,
+            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+              maxCrossAxisExtent: 260,
+              mainAxisExtent: 72,
+              crossAxisSpacing: 10,
+              mainAxisSpacing: 10,
+            ),
             children: [for (final tile in tiles) _TileCard(tile: tile)],
           ),
         ],
@@ -89,6 +94,8 @@ class HomePage extends StatelessWidget {
           Colors.purple, () => open(context, AddBillPage(session: session))),
       _Tile('Purchase Bills', 'Bills from suppliers', Icons.receipt_long,
           Colors.indigo, () => open(context, BillListPage(session: session))),
+      _Tile('Suppliers', 'Distributors list', Icons.local_shipping,
+          Colors.blue, () => open(context, SuppliersPage(session: session))),
       _Tile('Add Stock', 'One batch by hand', Icons.add_box,
           Colors.orange, () => open(context, AddStockPage(session: session))),
       if (session.isOwner)
@@ -104,11 +111,12 @@ class HomePage extends StatelessWidget {
     final reports = <_Tile>[
       _Tile('Stock & Expiry', 'Every batch, soonest first', Icons.inventory_2,
           Colors.red, () => open(context, StockListPage(session: session))),
-      _Tile('Stock Position', 'Coming soon', Icons.assessment,
-          Colors.blueGrey, () => comingSoon(context, 'Stock position report')),
       if (session.isOwner)
         _Tile('GST Report', 'Monthly GSTR-1 & 3B', Icons.account_balance,
             Colors.brown, () => open(context, GstReportPage(session: session))),
+      if (session.isOwner)
+        _Tile('Monthly Profit', 'Sales − cost − expenses', Icons.trending_up,
+            Colors.green, () => open(context, ProfitPage(session: session))),
     ];
 
     return Scaffold(
@@ -323,23 +331,34 @@ class _TileCard extends StatelessWidget {
       child: InkWell(
         onTap: tile.onTap,
         child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          // Icon on the left, title and one grey line beside it
+          child: Row(
             children: [
               CircleAvatar(
+                radius: 20,
                 backgroundColor: tile.color.withValues(alpha: 0.15),
-                child: Icon(tile.icon, color: tile.color),
+                child: Icon(tile.icon, color: tile.color, size: 22),
               ),
-              const Spacer(),
-              Text(tile.title,
-                  maxLines: 2,
-                  style: const TextStyle(
-                      fontSize: 14, fontWeight: FontWeight.w600)),
-              Text(tile.subtitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 12, color: Colors.grey)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(tile.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 14, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 2),
+                    Text(tile.subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                  ],
+                ),
+              ),
             ],
           ),
         ),

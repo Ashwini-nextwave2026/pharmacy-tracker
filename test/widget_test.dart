@@ -2,9 +2,11 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pharmacy_tracker/models/expense.dart';
 import 'package:pharmacy_tracker/models/gst_report.dart';
+import 'package:pharmacy_tracker/models/profit_report.dart';
 import 'package:pharmacy_tracker/models/purchase_bill.dart';
 import 'package:pharmacy_tracker/models/sale_bill.dart';
 import 'package:pharmacy_tracker/models/stock_item.dart';
+import 'package:pharmacy_tracker/models/supplier.dart';
 import 'package:pharmacy_tracker/models/supplier_payment.dart';
 import 'package:pharmacy_tracker/services/stock_import.dart';
 import 'package:pharmacy_tracker/utils/format.dart';
@@ -264,5 +266,52 @@ void main() {
   test('CSV with commas works too', () {
     final rows = parseStockRows('Pan 40,P77,11/26,30,"1,200.00",12');
     expect(rows.single.item!.mrp, 1200);
+  });
+
+  test('monthly profit: sales minus cost of what was sold minus expenses', () {
+    final report = ProfitReport(
+      month: today,
+      sales: [
+        SaleBill(date: today, customerName: 'A', lines: [
+          // 10 × 105 incl. 5% GST = 1000 sales value; cost 70 each = 700
+          SaleLine(stockId: 's1', name: 'Dolo 650', batch: 'B1', expiry: today,
+              quantity: 10, mrp: 105, gstPct: 5, costRate: 70),
+          // old line without cost: looked up from stock (60 × 2 = 120)
+          SaleLine(stockId: 's2', name: 'Pan 40', batch: 'P1', expiry: today,
+              quantity: 2, mrp: 112, gstPct: 12),
+          // no cost anywhere: left out of profit
+          SaleLine(stockId: 's3', name: 'Syrup', batch: 'S1', expiry: today,
+              quantity: 1, mrp: 105, gstPct: 5),
+        ]),
+      ],
+      expenses: [Expense(date: today, category: 'Rent', amount: 150)],
+      stockCosts: {'s2': 60},
+    );
+    expect(round2(report.salesValue), 1300); // 1000 + 200 + 100
+    expect(report.costOfSales, 820); // 700 + 120
+    expect(round2(report.grossProfit), 380); // (1000 + 200) - 820
+    expect(round2(report.netProfit), 230); // 380 - 150 rent
+    expect(report.linesWithoutCost, 1);
+    expect(report.topMedicines.first.key, 'Dolo 650'); // 300 vs 80
+  });
+
+  test('purchase bill line cost spreads over free units after discount', () {
+    final line = BillLine(name: 'A', batch: 'B', expiry: today,
+        quantity: 10, free: 2, rate: 20, discountPct: 10, mrp: 33);
+    expect(round2(line.taxable / line.unitsIn), 15); // 180 / 12
+  });
+
+  test('supplier names match however they are typed', () {
+    expect(nameKey('Sri Ram Pharma'), nameKey(' SRI  RAM PHARMA. '));
+    final all = [
+      Supplier(name: 'Medplus Distributors'),
+      Supplier(name: 'Sri Ram Pharma', gstin: '29ABCDE1234F1Z5'),
+      Supplier(name: 'Ram Medical Agencies'),
+    ];
+    final found = searchSuppliers(all, 'ram');
+    expect(found.first.name, 'Ram Medical Agencies'); // starts with "ram" first
+    expect(found.length, 2);
+    expect(all[1].interState, true); // 29 = Karnataka, so IGST
+    expect(all[0].interState, false); // no GSTIN
   });
 }

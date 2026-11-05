@@ -149,6 +149,7 @@ List<ImportRow> parseStockRows(String text) {
         hsn: c[6].isEmpty ? '3004' : c[6],
         pack: c[7].isEmpty ? null : c[7],
         rate: rate,
+        costRate: rate,
         supplier: c[9].isEmpty ? null : c[9],
       ),
     ));

@@ -17,6 +17,7 @@ class SaleLine {
   double mrp; // per unit, including GST
   double discountPct; // discount given to the customer
   double gstPct;
+  double? costRate; // what ONE unit cost the pharmacy (before GST), for profit
 
   SaleLine({
     required this.stockId,
@@ -28,7 +29,11 @@ class SaleLine {
     required this.mrp,
     this.discountPct = 0,
     this.gstPct = 0,
+    this.costRate,
   });
+
+  // What these units cost the pharmacy (null if the cost isn't known)
+  double? get cost => costRate == null ? null : costRate! * quantity;
 
   double get mrpValue => quantity * mrp; // before discount
   double get discount => mrpValue * discountPct / 100;
@@ -47,6 +52,7 @@ class SaleLine {
         'mrp': mrp,
         'discountPct': discountPct,
         'gstPct': gstPct,
+        if (costRate != null) 'costRate': costRate,
       };
 
   factory SaleLine.fromMap(Map<String, dynamic> map) => SaleLine(
@@ -59,6 +65,7 @@ class SaleLine {
         mrp: (map['mrp'] as num?)?.toDouble() ?? 0,
         discountPct: (map['discountPct'] as num?)?.toDouble() ?? 0,
         gstPct: (map['gstPct'] as num?)?.toDouble() ?? 0,
+        costRate: (map['costRate'] as num?)?.toDouble(),
       );
 }
 

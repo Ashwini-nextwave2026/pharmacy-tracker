@@ -4,10 +4,12 @@ import 'package:intl/intl.dart';
 import '../models/purchase_bill.dart';
 import '../models/session.dart';
 import '../models/stock_item.dart';
+import '../models/supplier.dart';
 import '../services/pharmacy_service.dart';
 import '../utils/format.dart';
 import '../widgets/gst_summary.dart';
 import 'add_bill_item_page.dart';
+import 'suppliers_page.dart' show SupplierFormPage;
 
 export '../utils/format.dart' show rupees; // older screens import it from here
 
@@ -23,6 +25,8 @@ class AddBillPage extends StatefulWidget {
 class _AddBillPageState extends State<AddBillPage> {
   final formKey = GlobalKey<FormState>();
   final supplierController = TextEditingController();
+  final supplierFocus = FocusNode();
+  List<Supplier> suppliers = []; // the saved supplier list, for picking
   final gstinController = TextEditingController();
   final billNumberController = TextEditingController();
   final creditDaysController = TextEditingController(text: '30');
@@ -49,10 +53,53 @@ class _AddBillPageState extends State<AddBillPage> {
   @override
   void dispose() {
     supplierController.dispose();
+    supplierFocus.dispose();
     gstinController.dispose();
     billNumberController.dispose();
     creditDaysController.dispose();
     super.dispose();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    loadSuppliers();
+  }
+
+  Future<void> loadSuppliers() async {
+    final snap = await PharmacyService.suppliersRef(widget.session.pharmacyId)
+        .orderBy('name')
+        .get();
+    if (mounted) {
+      setState(() => suppliers = snap.docs.map(Supplier.fromFirestore).toList());
+    }
+  }
+
+  // A supplier was picked: fill in their GSTIN, IGST and credit days
+  void useSupplier(Supplier s) {
+    setState(() {
+      supplierController.text = s.name;
+      gstinController.text = s.gstin;
+      interState = s.interState;
+      creditDaysController.text = '${s.creditDays}';
+    });
+  }
+
+  // Open the Add supplier form with what's typed, then use the new supplier
+  Future<void> addNewSupplier() async {
+    final s = await Navigator.push<Supplier>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => SupplierFormPage(
+          session: widget.session,
+          initialName: supplierController.text.trim(),
+        ),
+      ),
+    );
+    if (s != null) {
+      setState(() => suppliers = [...suppliers, s]);
+      useSupplier(s);
+    }
   }
 
   Future<void> pickBillDate() async {
@@ -121,6 +168,8 @@ class _AddBillPageState extends State<AddBillPage> {
           hsn: line.hsn,
           pack: line.pack,
           gstPct: line.gstPct,
+          // real cost per unit: after discount, spread over free units too
+          costRate: line.unitsIn > 0 ? round2(line.taxable / line.unitsIn) : line.rate,
         );
         batch.set(stockRef, {
           ...item.toMap(),
@@ -130,6 +179,20 @@ class _AddBillPageState extends State<AddBillPage> {
       }
 
       await batch.commit();
+
+      // First bill from a supplier not in the list yet? Save them to the list.
+      final key = nameKey(bill.supplier);
+      if (!suppliers.any((s) => nameKey(s.name) == key)) {
+        try {
+          await PharmacyService.suppliersRef(widget.session.pharmacyId).add(Supplier(
+            name: bill.supplier,
+            gstin: bill.supplierGstin,
+            creditDays: bill.creditDays,
+          ).toMap());
+        } catch (_) {
+          // not important enough to stop: the bill is already saved
+        }
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -161,15 +224,60 @@ class _AddBillPageState extends State<AddBillPage> {
           padding: const EdgeInsets.all(20),
           children: [
             // 1. Supplier details
-            TextFormField(
-              controller: supplierController,
-              textCapitalization: TextCapitalization.words,
-              decoration: const InputDecoration(
-                labelText: 'Supplier / distributor',
-                border: OutlineInputBorder(),
+            // Type to search the supplier list; pick one to fill GSTIN etc.
+            RawAutocomplete<Supplier>(
+              textEditingController: supplierController,
+              focusNode: supplierFocus,
+              displayStringForOption: (s) => s.name,
+              optionsBuilder: (value) =>
+                  searchSuppliers(suppliers, value.text).take(8),
+              onSelected: useSupplier,
+              fieldViewBuilder: (context, controller, focusNode, onSubmit) =>
+                  TextFormField(
+                controller: controller,
+                focusNode: focusNode,
+                textCapitalization: TextCapitalization.words,
+                decoration: InputDecoration(
+                  labelText: 'Supplier / distributor',
+                  hintText: suppliers.isEmpty ? null : 'Type to search your suppliers',
+                  border: const OutlineInputBorder(),
+                  suffixIcon: IconButton(
+                    icon: const Icon(Icons.add_business),
+                    tooltip: 'Add a new supplier',
+                    onPressed: addNewSupplier,
+                  ),
+                ),
+                validator: (v) =>
+                    (v == null || v.trim().isEmpty) ? 'Enter the supplier name' : null,
+                onFieldSubmitted: (_) => onSubmit(),
               ),
-              validator: (v) =>
-                  (v == null || v.trim().isEmpty) ? 'Enter the supplier name' : null,
+              optionsViewBuilder: (context, onSelected, options) => Align(
+                alignment: Alignment.topLeft,
+                child: Material(
+                  elevation: 4,
+                  borderRadius: BorderRadius.circular(8),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 280, maxWidth: 480),
+                    child: ListView(
+                      padding: EdgeInsets.zero,
+                      shrinkWrap: true,
+                      children: [
+                        for (final s in options)
+                          ListTile(
+                            dense: true,
+                            leading: const Icon(Icons.local_shipping, color: Colors.indigo),
+                            title: Text(s.name),
+                            subtitle: Text([
+                              if (s.gstin.isNotEmpty) s.gstin,
+                              '${s.creditDays} days credit',
+                            ].join(' · ')),
+                            onTap: () => onSelected(s),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             ),
             const SizedBox(height: 14),
             TextFormField(

@@ -92,6 +92,7 @@ class _PickStockPageState extends State<PickStockPage> {
                   mrp: item.mrp ?? 0,
                   discountPct: disc,
                   gstPct: item.gstPct ?? 0,
+                  costRate: item.unitCost, // remembered for the profit report
                 ),
               );
             },

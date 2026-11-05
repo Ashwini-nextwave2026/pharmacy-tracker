@@ -108,6 +108,10 @@ class PharmacyService {
   static Future<void> removeMember(String pharmacyId, String memberUid) =>
       membersRef(pharmacyId).doc(memberUid).delete();
 
+  // ---- Supplier list ----
+  static CollectionReference<Map<String, dynamic>> suppliersRef(String pharmacyId) =>
+      pharmacyRef(pharmacyId).collection('suppliers');
+
   // ---- Shop expenses (rent, electricity, salary...) ----
   static CollectionReference<Map<String, dynamic>> expensesRef(String pharmacyId) =>
       pharmacyRef(pharmacyId).collection('expenses');

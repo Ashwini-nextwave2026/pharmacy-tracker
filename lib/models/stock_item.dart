@@ -21,6 +21,9 @@ class StockItem {
   String? hsn; // HSN code, printed on the sale bill
   String? pack; // pack size, e.g. "10's"
   double? gstPct; // GST %, used to split GST out of the MRP on a sale
+  // Real cost of ONE unit before GST, after trade discount and free goods
+  // (e.g. 10 bought at Rs.20 + 2 free = Rs.200 / 12 = Rs.16.67). Used for profit.
+  double? costRate;
 
   StockItem({
     this.id,
@@ -35,7 +38,11 @@ class StockItem {
     this.hsn,
     this.pack,
     this.gstPct,
+    this.costRate,
   });
+
+  // Cost per unit for profit: the real cost if known, else the bill rate
+  double? get unitCost => costRate ?? rate;
 
   // Days from [today] until expiry (negative = already expired)
   int daysLeft([DateTime? today]) {
@@ -69,6 +76,7 @@ class StockItem {
         if (hsn != null) 'hsn': hsn,
         if (pack != null) 'pack': pack,
         if (gstPct != null) 'gstPct': gstPct,
+        if (costRate != null) 'costRate': costRate,
       };
 
   // Build a StockItem from a Firestore document
@@ -87,6 +95,7 @@ class StockItem {
       hsn: data['hsn'] as String?,
       pack: data['pack'] as String?,
       gstPct: (data['gstPct'] as num?)?.toDouble(),
+      costRate: (data['costRate'] as num?)?.toDouble(),
     );
   }
 }
