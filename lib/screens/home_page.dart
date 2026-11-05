@@ -8,6 +8,7 @@ import '../providers/theme_provider.dart';
 import '../services/pharmacy_service.dart';
 import 'add_bill_page.dart';
 import 'add_stock_page.dart';
+import 'backup_page.dart';
 import 'bill_list_page.dart';
 import 'expense_page.dart';
 import 'gst_report_page.dart';
@@ -117,6 +118,9 @@ class HomePage extends StatelessWidget {
       if (session.isOwner)
         _Tile('Monthly Profit', 'Sales − cost − expenses', Icons.trending_up,
             Colors.green, () => open(context, ProfitPage(session: session))),
+      if (session.isOwner)
+        _Tile('Backup', 'Save all data to a file', Icons.backup,
+            Colors.blueGrey, () => open(context, BackupPage(session: session))),
     ];
 
     return Scaffold(

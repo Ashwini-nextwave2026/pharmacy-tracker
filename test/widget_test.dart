@@ -1,4 +1,5 @@
 // Tests for the expiry logic. Run them with:  flutter test
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pharmacy_tracker/models/expense.dart';
 import 'package:pharmacy_tracker/models/gst_report.dart';
@@ -8,6 +9,7 @@ import 'package:pharmacy_tracker/models/sale_bill.dart';
 import 'package:pharmacy_tracker/models/stock_item.dart';
 import 'package:pharmacy_tracker/models/supplier.dart';
 import 'package:pharmacy_tracker/models/supplier_payment.dart';
+import 'package:pharmacy_tracker/services/backup_service.dart';
 import 'package:pharmacy_tracker/services/stock_import.dart';
 import 'package:pharmacy_tracker/utils/format.dart';
 
@@ -313,5 +315,24 @@ void main() {
     expect(found.length, 2);
     expect(all[1].interState, true); // 29 = Karnataka, so IGST
     expect(all[0].interState, false); // no GSTIN
+  });
+
+  test('backup turns Firestore dates into plain JSON', () {
+    final value = toJsonValue({
+      'name': 'Dolo 650',
+      'expiry': Timestamp.fromDate(DateTime(2027, 8, 31)),
+      'lines': [
+        {'qty': 2, 'when': Timestamp.fromDate(DateTime(2026, 11, 5, 10, 30))},
+      ],
+    }) as Map;
+    expect(value['name'], 'Dolo 650');
+    expect(value['expiry'], {'__timestamp': '2027-08-31T00:00:00.000'});
+    expect((value['lines'] as List).first['when'],
+        {'__timestamp': '2026-11-05T10:30:00.000'});
+  });
+
+  test('backup file name has the shop and date', () {
+    expect(backupFileName('Cals Medical', DateTime(2026, 11, 5, 15, 7)),
+        'PharmacyBackup-Cals-Medical-2026-11-05-1507.json');
   });
 }
