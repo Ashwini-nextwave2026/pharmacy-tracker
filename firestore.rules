@@ -1,0 +1,85 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---- Helpers ----
+    function signedIn() { return request.auth != null; }
+    function pharmacyPath(pid) {
+      return /databases/$(database)/documents/pharmacies/$(pid);
+    }
+    function memberPath(pid) {
+      return /databases/$(database)/documents/pharmacies/$(pid)/members/$(request.auth.uid);
+    }
+    function isMember(pid) { return signedIn() && exists(memberPath(pid)); }
+    function isOwner(pid) {
+      return signedIn() && get(pharmacyPath(pid)).data.ownerId == request.auth.uid;
+    }
+
+    // ---- Each user's own profile ----
+    match /users/{uid} {
+      allow read, write: if signedIn() && request.auth.uid == uid;
+    }
+
+    // ---- Invite codes ----
+    match /inviteCodes/{code} {
+      allow get: if signedIn();
+      allow create: if signedIn()
+        && getAfter(pharmacyPath(request.resource.data.pharmacyId)).data.ownerId == request.auth.uid
+        && getAfter(pharmacyPath(request.resource.data.pharmacyId)).data.inviteCode == code;
+    }
+
+    // ---- Pharmacies ----
+    match /pharmacies/{pid} {
+      allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
+      allow read: if isMember(pid);
+      allow update: if isOwner(pid);
+
+      match /members/{memberId} {
+        allow read: if isMember(pid) || (signedIn() && request.auth.uid == memberId);
+        allow create: if signedIn() && request.auth.uid == memberId && (
+          // the owner adding themselves while creating the pharmacy
+          (request.resource.data.role == 'owner'
+            && getAfter(pharmacyPath(pid)).data.ownerId == request.auth.uid)
+          ||
+          // staff joining with the right invite code
+          (request.resource.data.role == 'staff'
+            && request.resource.data.inviteCode == get(pharmacyPath(pid)).data.inviteCode)
+        );
+        // the owner can remove staff, but not themselves
+        allow delete: if isOwner(pid) && memberId != request.auth.uid;
+      }
+
+      match /stock/{itemId} {
+        allow read, create, update: if isMember(pid);
+        allow delete: if isOwner(pid);
+      }
+
+      match /bills/{billId} {
+        allow read, create, update: if isMember(pid);
+        allow delete: if isOwner(pid);
+      }
+
+      // NEW: sale bills. Anyone in the pharmacy can sell;
+      // only the owner can change or delete a saved sale.
+      match /sales/{saleId} {
+        allow read, create: if isMember(pid);
+        allow update, delete: if isOwner(pid);
+      }
+
+      // Payments to suppliers: owner only (staff don't see money)
+      match /payments/{paymentId} {
+        allow read, create, update, delete: if isOwner(pid);
+      }
+
+      // Shop expenses: owner only
+      match /expenses/{expenseId} {
+        allow read, create, update, delete: if isOwner(pid);
+      }
+
+      // Running bill numbers (S-0001, S-0002, ...)
+      match /counters/{counterId} {
+        allow read, write: if isMember(pid);
+      }
+    }
+  }
+}

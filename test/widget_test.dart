@@ -1,30 +1,268 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
-import 'package:flutter/material.dart';
+// Tests for the expiry logic. Run them with:  flutter test
 import 'package:flutter_test/flutter_test.dart';
-
-import 'package:pharmacy_tracker/main.dart';
+import 'package:pharmacy_tracker/models/expense.dart';
+import 'package:pharmacy_tracker/models/gst_report.dart';
+import 'package:pharmacy_tracker/models/purchase_bill.dart';
+import 'package:pharmacy_tracker/models/sale_bill.dart';
+import 'package:pharmacy_tracker/models/stock_item.dart';
+import 'package:pharmacy_tracker/models/supplier_payment.dart';
+import 'package:pharmacy_tracker/services/stock_import.dart';
+import 'package:pharmacy_tracker/utils/format.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  final today = DateTime(2026, 10, 29);
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+  StockItem itemExpiring(DateTime date) =>
+      StockItem(name: 'Test', batch: 'B1', quantity: 1, expiry: date);
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+  test('a batch past its expiry date is expired', () {
+    final item = itemExpiring(DateTime(2026, 10, 28));
+    expect(item.daysLeft(today), -1);
+    expect(item.status(today), ExpiryStatus.expired);
+  });
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+  test('a batch expiring today counts as soon, not expired', () {
+    final item = itemExpiring(DateTime(2026, 10, 29));
+    expect(item.daysLeft(today), 0);
+    expect(item.status(today), ExpiryStatus.soon);
+  });
+
+  test('a batch expiring in exactly 30 days is soon', () {
+    final item = itemExpiring(DateTime(2026, 11, 28));
+    expect(item.daysLeft(today), 30);
+    expect(item.status(today), ExpiryStatus.soon);
+  });
+
+  test('a batch expiring in 31 days is safe', () {
+    final item = itemExpiring(DateTime(2026, 11, 29));
+    expect(item.status(today), ExpiryStatus.safe);
+  });
+
+  test('bill total adds up quantity × rate for every line', () {
+    final bill = PurchaseBill(
+      supplier: 'Test Distributors',
+      billNumber: 'INV-1',
+      billDate: today,
+      lines: [
+        BillLine(name: 'A', batch: 'B1', expiry: today, quantity: 10, rate: 12.5, mrp: 20),
+        BillLine(name: 'B', batch: 'B2', expiry: today, quantity: 4, rate: 30, mrp: 45),
+      ],
+    );
+    expect(bill.total, 245.0); // 10 × 12.50 + 4 × 30
+    expect(bill.totalUnits, 14);
+  });
+
+  test('purchase line: discount, then GST on the taxable value', () {
+    final line = BillLine(
+        name: 'Dolo 650', batch: 'B1', expiry: today,
+        quantity: 10, free: 2, rate: 20, discountPct: 10, gstPct: 5, mrp: 33);
+    expect(line.gross, 200); // 10 × 20
+    expect(line.discount, 20); // 10% of 200
+    expect(line.taxable, 180);
+    expect(line.gstAmount, 9); // 5% of 180
+    expect(line.amount, 189);
+    expect(line.unitsIn, 12); // 10 bought + 2 free go into stock
+  });
+
+  test('purchase bill: CGST/SGST split, slabs and round off', () {
+    final bill = PurchaseBill(
+      supplier: 'Test', billNumber: 'INV-2', billDate: today,
+      lines: [
+        BillLine(name: 'A', batch: 'B1', expiry: today, quantity: 10, rate: 20, discountPct: 10, gstPct: 5, mrp: 33),
+        BillLine(name: 'B', batch: 'B2', expiry: today, quantity: 3, rate: 33.33, gstPct: 12, mrp: 50),
+      ],
+    );
+    // B: 99.99 taxable + 12.00 GST (11.9988) = 111.9888
+    expect(round2(bill.taxableTotal), 279.99);
+    expect(round2(bill.cgst), round2(bill.sgst));
+    expect(bill.igst, 0);
+    expect(bill.slabs.map((s) => s.rate).toList(), [5, 12]);
+    expect(bill.total, 301); // 189 + 111.9888 = 300.9888 -> 301
+    expect(bill.roundOff, 0.01);
+  });
+
+  test('inter-state purchase bill uses IGST only', () {
+    final bill = PurchaseBill(
+      supplier: 'Test', billNumber: 'INV-3', billDate: today, interState: true,
+      lines: [BillLine(name: 'A', batch: 'B1', expiry: today, quantity: 1, rate: 100, gstPct: 12, mrp: 150)],
+    );
+    expect(bill.igst, 12);
+    expect(bill.cgst, 0);
+  });
+
+  test('sale: MRP includes GST, so GST is taken out of the price', () {
+    final sale = SaleBill(
+      date: today, customerName: 'Test',
+      lines: [
+        SaleLine(stockId: 's1', name: 'A', batch: 'B1', expiry: today,
+            quantity: 2, mrp: 105, gstPct: 5), // 210 = 200 + 10 GST
+      ],
+    );
+    expect(sale.total, 210);
+    expect(round2(sale.taxableTotal), 200);
+    expect(round2(sale.gstTotal), 10);
+    expect(round2(sale.cgst), 5);
+  });
+
+  test('sale discount comes off the MRP before GST is worked out', () {
+    final line = SaleLine(stockId: 's1', name: 'A', batch: 'B1', expiry: today,
+        quantity: 1, mrp: 112, discountPct: 10, gstPct: 12);
+    expect(round2(line.amount), 100.8); // 112 − 10%
+    expect(round2(line.taxable), 90); // 100.8 / 1.12
+    expect(round2(line.gstAmount), 10.8);
+  });
+
+  test('GST report: sales tax minus purchase credit = cash to pay', () {
+    final report = GstReport(
+      month: today,
+      sales: [
+        SaleBill(date: today, customerName: 'A', billNumber: 'S-0002', lines: [
+          SaleLine(stockId: 's1', name: 'A', hsn: '3004', batch: 'B1', expiry: today,
+              quantity: 10, mrp: 105, gstPct: 5), // 1000 taxable + 50 GST
+        ]),
+        SaleBill(date: today, customerName: 'B', billNumber: 'S-0001', lines: [
+          SaleLine(stockId: 's1', name: 'A', hsn: '3004', batch: 'B1', expiry: today,
+              quantity: 2, mrp: 105, gstPct: 5), // 200 taxable + 10 GST
+        ]),
+      ],
+      purchases: [
+        PurchaseBill(supplier: 'X', billNumber: 'P1', billDate: today, lines: [
+          BillLine(name: 'A', batch: 'B1', expiry: today, quantity: 10,
+              rate: 80, gstPct: 5, mrp: 105), // 800 taxable + 40 GST
+        ]),
+      ],
+    );
+    expect(round2(report.outputCgst), 30); // 60 GST on sales, half each
+    expect(round2(report.itcCgst), 20); // 40 GST on purchases, half each
+    expect(report.setOff.cgstCash, 10);
+    expect(report.setOff.sgstCash, 10);
+    expect(report.cashToPay, 20);
+    expect(report.firstBill, 'S-0001');
+    expect(report.lastBill, 'S-0002');
+    expect(report.salesByHsn.single.quantity, 12);
+  });
+
+  test('GST report: IGST credit is used first, extra credit carries forward', () {
+    final report = GstReport(
+      month: today,
+      sales: [
+        SaleBill(date: today, customerName: 'A', lines: [
+          SaleLine(stockId: 's1', name: 'A', batch: 'B1', expiry: today,
+              quantity: 1, mrp: 112, gstPct: 12), // 12 GST: CGST 6, SGST 6
+        ]),
+      ],
+      purchases: [
+        PurchaseBill(supplier: 'X', billNumber: 'P1', billDate: today,
+            interState: true, lines: [
+          BillLine(name: 'A', batch: 'B1', expiry: today, quantity: 1,
+              rate: 100, gstPct: 12, mrp: 112), // IGST 12
+        ]),
+        PurchaseBill(supplier: 'Y', billNumber: 'P2', billDate: today, lines: [
+          BillLine(name: 'B', batch: 'B2', expiry: today, quantity: 1,
+              rate: 100, gstPct: 5, mrp: 105), // CGST 2.5, SGST 2.5
+        ]),
+      ],
+    );
+    final so = report.setOff;
+    expect(so.cgstCash, 0); // IGST 12 covers CGST 6 and SGST 6
+    expect(so.sgstCash, 0);
+    expect(so.igstCarry, 0);
+    expect(so.cgstCarry, 2.5); // own credit not needed, carried forward
+    expect(so.sgstCarry, 2.5);
+  });
+
+  test('amount in words, Indian style', () {
+    expect(rupeesInWords(231), 'Rupees Two Hundred Thirty One Only');
+    expect(rupeesInWords(125000), 'Rupees One Lakh Twenty Five Thousand Only');
+    expect(rupeesInWords(1121), 'Rupees One Thousand One Hundred Twenty One Only');
+    expect(rupeesInWords(10.50), 'Rupees Ten and Fifty Paise Only');
+  });
+
+  PurchaseBill billOf(String id, DateTime date, double rate, {double paid = 0}) =>
+      PurchaseBill(
+        id: id, supplier: 'Sri Ram Pharma', billNumber: id, billDate: date,
+        creditDays: 30, paid: paid,
+        lines: [BillLine(name: 'A', batch: 'B', expiry: date, quantity: 1, rate: rate, mrp: rate)],
+      );
+
+  test('supplier payment clears the oldest bills first', () {
+    final bills = [
+      billOf('P3', DateTime(2026, 10, 20), 500),
+      billOf('P1', DateTime(2026, 9, 1), 1000, paid: 400), // 600 left
+      billOf('P2', DateTime(2026, 9, 15), 800),
+    ];
+    final r = allocatePayment(1000, bills);
+    expect(r.allocations.map((a) => a.billId).toList(), ['P1', 'P2']);
+    expect(r.allocations[0].amount, 600); // P1 fully cleared
+    expect(r.allocations[1].amount, 400); // P2 part paid
+    expect(r.advance, 0);
+  });
+
+  test('paying more than owed leaves an advance', () {
+    final r = allocatePayment(1500, [billOf('P1', today, 1000)]);
+    expect(r.allocations.single.amount, 1000);
+    expect(r.advance, 500);
+  });
+
+  test('bill status and overdue days', () {
+    final bill = billOf('P1', DateTime(2026, 9, 1), 1000, paid: 250);
+    expect(bill.balance, 750);
+    expect(bill.isPartPaid, true);
+    expect(bill.dueDate, DateTime(2026, 10, 1));
+    expect(bill.overdueDays(DateTime(2026, 10, 29)), 28);
+    final paid = billOf('P2', DateTime(2026, 9, 1), 1000, paid: 1000);
+    expect(paid.isPaid, true);
+    expect(paid.overdueDays(DateTime(2026, 10, 29)), 0);
+  });
+
+  test('supplier dues are grouped and totalled', () {
+    final dues = groupBySupplier([
+      billOf('P1', DateTime(2026, 10, 1), 1000, paid: 1000),
+      billOf('P2', DateTime(2026, 10, 5), 700),
+    ]);
+    expect(dues.single.outstanding, 700);
+    expect(dues.single.unpaidCount, 1);
+  });
+
+  test('expenses are totalled by category, biggest first', () {
+    final list = [
+      Expense(date: today, category: 'Electricity', amount: 2450),
+      Expense(date: today, category: 'Rent', amount: 15000),
+      Expense(date: today, category: 'Tea & snacks', amount: 120),
+      Expense(date: today, category: 'Tea & snacks', amount: 80),
+    ];
+    final byCat = expensesByCategory(list);
+    expect(byCat.first.key, 'Rent');
+    expect(byCat.last.value, 200);
+  });
+
+  test('expiry formats from Excel', () {
+    expect(parseExpiry('08/27'), DateTime(2027, 8, 31)); // last day of month
+    expect(parseExpiry('02/2028'), DateTime(2028, 2, 29)); // leap year
+    expect(parseExpiry('15/03/2027'), DateTime(2027, 3, 15));
+    expect(parseExpiry('2027-12-01'), DateTime(2027, 12, 1));
+    expect(parseExpiry('31/02/2027'), null);
+    expect(parseExpiry('soon'), null);
+  });
+
+  test('rows pasted from Excel become stock, bad rows are reported', () {
+    const pasted = 'Medicine name\tBatch\tExpiry\tQty\tMRP\tGST %\n'
+        'Dolo 650\tb2041\t08/27\t50\t33.00\t5\n'
+        'Azithral 500\tAZ1\t03/27\t10\t₹118.50\t12\t3004\t5\'s\t80\tSri Ram Pharma\n'
+        'Cough syrup\tC9\tlater\t5\t95\n'
+        '\n';
+    final rows = parseStockRows(pasted);
+    expect(rows.length, 3); // heading and blank line skipped
+    expect(rows[0].item!.batch, 'B2041');
+    expect(rows[0].item!.gstPct, 5);
+    expect(rows[1].item!.mrp, 118.5);
+    expect(rows[1].item!.supplier, 'Sri Ram Pharma');
+    expect(rows[2].ok, false);
+    expect(rows[2].error, contains('Expiry'));
+  });
+
+  test('CSV with commas works too', () {
+    final rows = parseStockRows('Pan 40,P77,11/26,30,"1,200.00",12');
+    expect(rows.single.item!.mrp, 1200);
   });
 }

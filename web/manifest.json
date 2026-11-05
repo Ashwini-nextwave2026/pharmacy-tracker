@@ -1,11 +1,11 @@
 {
-    "name": "pharmacy_tracker",
-    "short_name": "pharmacy_tracker",
+    "name": "Pharmacy Tracker",
+    "short_name": "Pharmacy",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#00897B",
+    "theme_color": "#00897B",
+    "description": "Stock, expiry, GST purchase and sale bills for your pharmacy",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
