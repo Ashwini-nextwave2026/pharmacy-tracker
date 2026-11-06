@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
@@ -28,9 +29,60 @@ class _BackupPageState extends State<BackupPage> {
     'payments': 'Supplier payments',
     'expenses': 'Expenses',
     'suppliers': 'Suppliers',
+    'adjustments': 'Returns & write-offs',
     'members': 'Owner & staff',
     'counters': 'Bill number counters',
   };
+
+  // ---- Restore: pick a backup file, show what it would do, then do it ----
+  Future<void> restore() async {
+    // file_picker 13: pickFile() returns one file, or null if cancelled
+    final picked = await FilePicker.pickFile(
+      type: FileType.custom,
+      allowedExtensions: ['json'],
+    );
+    if (picked == null || !mounted) return;
+    final bytes = await picked.readAsBytes();
+    if (!mounted) return;
+
+    setState(() => working = true);
+    try {
+      final backup = parseBackup(bytes);
+      if (backup.pharmacyId != widget.session.pharmacyId) {
+        throw FormatException('This backup is from another pharmacy '
+            '("${backup.pharmacyName}"), not ${widget.session.pharmacyName}.');
+      }
+      final plan = await RestoreService.plan(widget.session.pharmacyId, backup);
+      if (!mounted) return;
+      setState(() => working = false);
+
+      final overwrite = await showDialog<bool>(
+        context: context,
+        builder: (context) => _RestoreDialog(backup: backup, plan: plan, labels: labels),
+      );
+      if (overwrite == null || !mounted) return; // cancelled
+
+      setState(() => working = true);
+      final written = await RestoreService.restore(
+        pharmacyId: widget.session.pharmacyId,
+        backup: backup,
+        plan: plan,
+        overwriteExisting: overwrite,
+      );
+      if (!mounted) return;
+      setState(() => working = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(written == 0
+              ? 'Nothing to restore: everything in the backup is already in the app.'
+              : 'Restore done: $written record${written == 1 ? '' : 's'} written back.')));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => working = false);
+      final msg = e is FormatException ? e.message : '$e';
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Restore stopped: $msg')));
+    }
+  }
 
   Future<void> backup() async {
     setState(() => working = true);
@@ -160,7 +212,24 @@ class _BackupPageState extends State<BackupPage> {
                 ),
               ],
 
-              // 4. Tips
+              // 4. Restore
+              const SizedBox(height: 20),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.settings_backup_restore),
+                label: const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: Text('Restore from a backup file'),
+                ),
+                onPressed: working ? null : restore,
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Brings back records that are missing now. Nothing is deleted, and you '
+                'see what will happen before anything changes.',
+                style: TextStyle(color: Colors.grey, fontSize: 12),
+              ),
+
+              // 5. Tips
               const SizedBox(height: 20),
               const Card(
                 child: Padding(
@@ -183,6 +252,96 @@ class _BackupPageState extends State<BackupPage> {
           );
         },
       ),
+    );
+  }
+}
+
+// Shows what a restore would do; returns false (add missing only),
+// true (also overwrite existing), or null (cancel)
+class _RestoreDialog extends StatefulWidget {
+  final BackupFile backup;
+  final List<RestorePlanItem> plan;
+  final Map<String, String> labels;
+
+  const _RestoreDialog({required this.backup, required this.plan, required this.labels});
+
+  @override
+  State<_RestoreDialog> createState() => _RestoreDialogState();
+}
+
+class _RestoreDialogState extends State<_RestoreDialog> {
+  bool overwrite = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final missing = widget.plan.fold<int>(0, (t, p) => t + p.missing.length);
+    final existing = widget.plan.fold<int>(0, (t, p) => t + p.existing.length);
+    final toWrite = missing + (overwrite ? existing : 0);
+
+    return AlertDialog(
+      title: const Text('Restore this backup?'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Backup from ${DateFormat('d MMM yyyy, h:mm a').format(widget.backup.createdAt)}',
+                style: const TextStyle(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 10),
+            Row(children: const [
+              Expanded(child: Text('', style: TextStyle(fontSize: 12))),
+              SizedBox(width: 60, child: Text('Missing', textAlign: TextAlign.right,
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold))),
+              SizedBox(width: 70, child: Text('Already in', textAlign: TextAlign.right,
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold))),
+            ]),
+            const Divider(height: 8),
+            for (final p in widget.plan)
+              if (p.missing.isNotEmpty || p.existing.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Row(children: [
+                    Expanded(child: Text(widget.labels[p.collection] ?? p.collection)),
+                    SizedBox(
+                      width: 60,
+                      child: Text('${p.missing.length}',
+                          textAlign: TextAlign.right,
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: p.missing.isEmpty ? Colors.grey : Colors.green)),
+                    ),
+                    SizedBox(
+                      width: 70,
+                      child: Text('${p.existing.length}',
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(color: Colors.grey)),
+                    ),
+                  ]),
+                ),
+            const SizedBox(height: 12),
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              value: overwrite,
+              onChanged: (v) => setState(() => overwrite = v ?? false),
+              title: const Text('Also overwrite records that are already in the app'),
+              subtitle: const Text(
+                  'Only if today\'s data is wrong. Changes made after the backup '
+                  '(sales, stock quantities, payments) would be replaced by the old values.',
+                  style: TextStyle(fontSize: 12)),
+            ),
+            const Text('Owner & staff are never restored. Bill numbers never go back.',
+                style: TextStyle(fontSize: 12, color: Colors.grey)),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        FilledButton(
+          style: overwrite ? FilledButton.styleFrom(backgroundColor: Colors.orange) : null,
+          onPressed: toWrite == 0 ? null : () => Navigator.pop(context, overwrite),
+          child: Text(toWrite == 0 ? 'Nothing to restore' : 'Restore $toWrite records'),
+        ),
+      ],
     );
   }
 }

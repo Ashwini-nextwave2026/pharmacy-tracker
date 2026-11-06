@@ -15,6 +15,7 @@ import 'gst_report_page.dart';
 import 'import_stock_page.dart';
 import 'new_sale_page.dart';
 import 'profit_page.dart';
+import 'returns_page.dart';
 import 'sale_list_page.dart';
 import 'shop_details_page.dart';
 import 'staff_page.dart';
@@ -99,6 +100,8 @@ class HomePage extends StatelessWidget {
           Colors.blue, () => open(context, SuppliersPage(session: session))),
       _Tile('Add Stock', 'One batch by hand', Icons.add_box,
           Colors.orange, () => open(context, AddStockPage(session: session))),
+      _Tile('Returns', 'Return or write off', Icons.assignment_return,
+          Colors.red, () => open(context, ReturnsPage(session: session))),
       if (session.isOwner)
         _Tile('Import Stock', 'Many from Excel', Icons.upload_file,
             Colors.green, () => open(context, ImportStockPage(session: session))),

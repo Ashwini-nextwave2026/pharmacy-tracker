@@ -2,7 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'purchase_bill.dart' show PurchaseBill, round2;
 
 // Ways the pharmacy pays a supplier
-const supplierPayModes = ['Cash', 'UPI', 'Bank transfer', 'Cheque'];
+const supplierPayModes = ['Cash', 'UPI', 'Bank transfer', 'Cheque', 'Credit note'];
 
 // How much of one payment went to one bill
 class Allocation {

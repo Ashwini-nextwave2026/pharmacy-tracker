@@ -2,6 +2,7 @@ import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/purchase_bill.dart';
+import '../models/stock_adjustment.dart';
 import '../models/supplier_payment.dart';
 
 // Everything about pharmacies, members and invite codes lives here,
@@ -107,6 +108,63 @@ class PharmacyService {
   // ---- Owner removes a staff member ----
   static Future<void> removeMember(String pharmacyId, String memberUid) =>
       membersRef(pharmacyId).doc(memberUid).delete();
+
+  // ---- Returns to supplier and write-offs ----
+  static CollectionReference<Map<String, dynamic>> adjustmentsRef(String pharmacyId) =>
+      pharmacyRef(pharmacyId).collection('adjustments');
+
+  // Take stock out (return or write-off) and record why, together.
+  // Fails if the batch doesn't have that many left.
+  static Future<void> recordAdjustment(String pharmacyId, StockAdjustment a) {
+    return _db.runTransaction((tx) async {
+      final stockDoc = stockRef(pharmacyId).doc(a.stockId);
+      final snap = await tx.get(stockDoc);
+      if (!snap.exists) throw Exception('This batch is no longer in stock.');
+      final have = (snap.data()!['quantity'] as num?)?.toInt() ?? 0;
+      if (have < a.quantity) {
+        throw Exception('Only $have left of ${a.name} (batch ${a.batch}).');
+      }
+      tx.update(stockDoc, {'quantity': FieldValue.increment(-a.quantity)});
+      tx.set(adjustmentsRef(pharmacyId).doc(), {
+        ...a.toMap(),
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    });
+  }
+
+  // Owner: use a supplier's pending returns as a credit note against their
+  // bills (recorded as a "Credit note" payment, oldest bills first)
+  static Future<SupplierPayment> adjustReturnsAsCredit({
+    required String pharmacyId,
+    required String supplier,
+    required List<StockAdjustment> returns,
+    required String creditNoteNumber,
+    required String userName,
+  }) async {
+    final amount = returns.fold<double>(0, (t, r) => t + r.value);
+    final payment = await recordSupplierPayment(
+      pharmacyId: pharmacyId,
+      payment: SupplierPayment(
+        supplier: supplier,
+        amount: round2(amount),
+        date: DateTime.now(),
+        mode: 'Credit note',
+        reference: creditNoteNumber,
+        note: 'Returns: ${returns.map((r) => '${r.name} x${r.quantity}').join(', ')}',
+        addedBy: userName,
+      ),
+    );
+    final batch = _db.batch();
+    for (final r in returns) {
+      batch.update(adjustmentsRef(pharmacyId).doc(r.id), {
+        'creditStatus': creditAdjusted,
+        'creditNoteNumber': creditNoteNumber,
+        'paymentId': payment.id,
+      });
+    }
+    await batch.commit();
+    return payment;
+  }
 
   // ---- Supplier list ----
   static CollectionReference<Map<String, dynamic>> suppliersRef(String pharmacyId) =>

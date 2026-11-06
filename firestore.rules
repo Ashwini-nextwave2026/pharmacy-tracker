@@ -78,6 +78,13 @@ service cloud.firestore {
         allow update, delete: if isOwner(pid);
       }
 
+      // Returns to supplier and write-offs: staff can record them
+      // (they take stock out); only the owner changes or deletes one
+      match /adjustments/{adjustmentId} {
+        allow read, create: if isMember(pid);
+        allow update, delete: if isOwner(pid);
+      }
+
       // Shop expenses: owner only
       match /expenses/{expenseId} {
         allow read, create, update, delete: if isOwner(pid);

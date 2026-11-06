@@ -6,6 +6,7 @@ import '../models/profit_report.dart';
 import '../models/purchase_bill.dart';
 import '../models/sale_bill.dart';
 import '../models/session.dart';
+import '../models/stock_adjustment.dart';
 import '../models/stock_item.dart';
 import '../services/pharmacy_service.dart';
 import '../utils/format.dart';
@@ -59,6 +60,10 @@ class _ProfitPageState extends State<ProfitPage> {
               .where('billDate', isGreaterThanOrEqualTo: start)
               .where('billDate', isLessThan: end)
               .get(),
+          PharmacyService.adjustmentsRef(pid)
+              .where('date', isGreaterThanOrEqualTo: start)
+              .where('date', isLessThan: end)
+              .get(),
         ]);
         final sales = results[0].docs.map(SaleBill.fromFirestore).toList();
 
@@ -82,6 +87,7 @@ class _ProfitPageState extends State<ProfitPage> {
           sales: sales,
           expenses: results[1].docs.map(Expense.fromFirestore).toList(),
           purchases: results[2].docs.map(PurchaseBill.fromFirestore).toList(),
+          adjustments: results[3].docs.map(StockAdjustment.fromFirestore).toList(),
           stockCosts: stockCosts,
         );
       }();
@@ -176,6 +182,9 @@ class _ProfitPageState extends State<ProfitPage> {
             _row('Gross profit', r.grossProfit, bold: true),
             const SizedBox(height: 8),
             _row('Less: expenses', -r.expensesTotal),
+            if (r.writeOffsTotal > 0)
+              _row('Less: stock written off (${r.writeOffCount})', -r.writeOffsTotal,
+                  color: Colors.red),
             const Divider(),
             _row(positive ? 'Net profit' : 'Net loss', r.netProfit, bold: true, color: color),
           ]),
@@ -215,13 +224,15 @@ class _ProfitPageState extends State<ProfitPage> {
         _row('Sales including GST (collected)', r.salesWithGst),
         _row('GST collected (not profit)', r.gstCollected),
         _row('Stock bought this month (without GST)', r.purchasesValue),
+        if (r.returnsTotal > 0)
+          _row('Returned to suppliers (comes back as credit)', r.returnsTotal),
       ]),
       const Padding(
         padding: EdgeInsets.fromLTRB(4, 8, 4, 24),
         child: Text(
           'Profit counts only the medicines SOLD this month at their purchase cost. '
-          'Stock bought but still on the shelf is not a cost yet. Expired or '
-          'damaged stock written off is not included yet.',
+          'Stock bought but still on the shelf is not a cost yet. Stock written '
+          'off (expired, damaged, lost) counts as a loss at its purchase cost.',
           style: TextStyle(fontSize: 12, color: Colors.grey),
         ),
       ),

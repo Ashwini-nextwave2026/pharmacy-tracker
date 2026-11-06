@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/purchase_bill.dart';
 import '../models/session.dart';
+import '../models/stock_adjustment.dart';
 import '../models/supplier_payment.dart';
 import '../services/pharmacy_service.dart';
 import '../utils/format.dart';
@@ -199,6 +200,9 @@ class SupplierAccountPage extends StatelessWidget {
                     ),
                   ),
 
+                  // Returns waiting for the supplier's credit note
+                  _PendingReturns(session: session, supplier: supplier),
+
                   // 2. Unpaid bills, oldest first
                   _heading('Unpaid bills (${unpaid.length})'),
                   if (unpaid.isEmpty)
@@ -285,6 +289,118 @@ class SupplierAccountPage extends StatelessWidget {
           '${p.note.isNotEmpty ? '\n${p.note}' : ''}',
         ),
       ),
+    );
+  }
+}
+
+// Returns sent to this supplier whose credit hasn't been used yet.
+// The owner taps once to take their value off the supplier's bills.
+class _PendingReturns extends StatelessWidget {
+  final Session session;
+  final String supplier;
+
+  const _PendingReturns({required this.session, required this.supplier});
+
+  Future<void> adjust(BuildContext context, List<StockAdjustment> pending) async {
+    final noteController = TextEditingController();
+    final total = pending.fold<double>(0, (t, r) => t + r.value);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Adjust returns as credit'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('${pending.length} return${pending.length == 1 ? '' : 's'} worth '
+                '${rupees.format(total)} will be taken off $supplier\'s bills, oldest first.'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: noteController,
+              decoration: const InputDecoration(
+                labelText: 'Supplier credit note no. (optional)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text('If the credit note amount is different, record it instead with '
+                'Record payment > Credit note.',
+                style: TextStyle(fontSize: 12, color: Colors.grey)),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Adjust')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await PharmacyService.adjustReturnsAsCredit(
+        pharmacyId: session.pharmacyId,
+        supplier: supplier,
+        returns: pending,
+        creditNoteNumber: noteController.text.trim(),
+        userName: session.userName,
+      );
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('${rupees.format(total)} credit adjusted against bills')));
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Could not adjust: $e')));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: PharmacyService.adjustmentsRef(session.pharmacyId)
+          .where('supplier', isEqualTo: supplier)
+          .snapshots(),
+      builder: (context, snap) {
+        if (!snap.hasData) return const SizedBox.shrink();
+        final pending = snap.data!.docs
+            .map(StockAdjustment.fromFirestore)
+            .where((a) => a.isReturn && a.creditStatus == creditPending && a.value > 0)
+            .toList();
+        if (pending.isEmpty) return const SizedBox.shrink();
+        final total = pending.fold<double>(0, (t, r) => t + r.value);
+        return Card(
+          margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          color: Colors.indigo.withValues(alpha: 0.08),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [
+                  const Icon(Icons.undo, color: Colors.indigo),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text('Returns waiting for credit: ${rupees.format(total)}',
+                        style: const TextStyle(fontWeight: FontWeight.bold)),
+                  ),
+                ]),
+                const SizedBox(height: 4),
+                for (final r in pending)
+                  Text('• ${r.name} × ${r.quantity} (batch ${r.batch}) · '
+                      '${DateFormat('d MMM').format(r.date)} · ${rupees.format(r.value)}',
+                      style: const TextStyle(fontSize: 13)),
+                const SizedBox(height: 8),
+                FilledButton.tonalIcon(
+                  icon: const Icon(Icons.receipt),
+                  label: const Text('Adjust as credit note'),
+                  onPressed: () => adjust(context, pending),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }

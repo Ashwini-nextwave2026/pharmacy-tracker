@@ -1,6 +1,7 @@
 import 'expense.dart';
 import 'purchase_bill.dart';
 import 'sale_bill.dart';
+import 'stock_adjustment.dart';
 
 // One month's profit, worked out from that month's sales and expenses.
 //
@@ -8,6 +9,7 @@ import 'sale_bill.dart';
 // - Cost of the medicines sold (purchase cost, excluding GST)
 // = Gross profit
 // - Expenses (rent, salary, electricity...)
+// - Stock written off (expired, damaged, lost), at cost
 // = Net profit
 //
 // GST is left out on both sides: it's collected for the government,
@@ -18,6 +20,7 @@ class ProfitReport {
   final List<SaleBill> sales;
   final List<Expense> expenses;
   final List<PurchaseBill> purchases; // shown for information only
+  final List<StockAdjustment> adjustments; // returns and write-offs this month
 
   // Cost per unit for sale lines saved before costs were recorded,
   // looked up from the stock batch: stockId -> cost
@@ -28,6 +31,7 @@ class ProfitReport {
     required this.sales,
     required this.expenses,
     this.purchases = const [],
+    this.adjustments = const [],
     this.stockCosts = const {},
   });
 
@@ -56,7 +60,15 @@ class ProfitReport {
       costedSalesValue == 0 ? 0 : grossProfit / costedSalesValue * 100;
 
   double get expensesTotal => expenses.fold(0, (t, e) => t + e.amount);
-  double get netProfit => grossProfit - expensesTotal;
+  // Expired / damaged stock thrown away is a loss (at what it cost).
+  // Returns aren't: the supplier gives the money back as credit.
+  Iterable<StockAdjustment> get _writeOffs => adjustments.where((a) => !a.isReturn);
+  double get writeOffsTotal => _writeOffs.fold(0, (t, a) => t + a.value);
+  int get writeOffCount => _writeOffs.length;
+  double get returnsTotal =>
+      adjustments.where((a) => a.isReturn).fold(0, (t, a) => t + a.value);
+
+  double get netProfit => grossProfit - expensesTotal - writeOffsTotal;
 
   List<MapEntry<String, double>> get expensesByCat => expensesByCategory(expenses);
 

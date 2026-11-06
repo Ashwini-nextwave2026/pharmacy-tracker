@@ -4,7 +4,9 @@ import 'package:intl/intl.dart';
 import '../models/purchase_bill.dart' show gstRates;
 import '../models/session.dart';
 import '../models/stock_item.dart';
+import '../models/stock_adjustment.dart';
 import '../services/pharmacy_service.dart';
+import 'returns_page.dart' show openAdjust;
 
 // One screen for both adding a new batch and editing an existing one.
 // Pass an [item] to edit it; leave it out to add a new one.
@@ -247,6 +249,34 @@ class _AddStockPageState extends State<AddStockPage> {
                 ),
                 onPressed: saving ? null : save,
               ),
+
+              // 7. Take stock out without a sale (only for a saved batch)
+              if (isEditing) ...[
+                const SizedBox(height: 24),
+                const Divider(),
+                const Text('Stock going out without a sale?',
+                    style: TextStyle(color: Colors.grey)),
+                const SizedBox(height: 8),
+                Row(children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      icon: const Icon(Icons.undo),
+                      label: const Text('Return to supplier'),
+                      onPressed: () => openAdjust(
+                          context, widget.session, widget.item!, adjustmentReturn),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      icon: const Icon(Icons.delete_sweep, color: Colors.red),
+                      label: const Text('Write off', style: TextStyle(color: Colors.red)),
+                      onPressed: () => openAdjust(
+                          context, widget.session, widget.item!, adjustmentWriteOff),
+                    ),
+                  ),
+                ]),
+              ],
             ],
           ),
         ),

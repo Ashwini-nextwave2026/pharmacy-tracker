@@ -1,11 +1,14 @@
 // Tests for the expiry logic. Run them with:  flutter test
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pharmacy_tracker/models/expense.dart';
 import 'package:pharmacy_tracker/models/gst_report.dart';
 import 'package:pharmacy_tracker/models/profit_report.dart';
 import 'package:pharmacy_tracker/models/purchase_bill.dart';
 import 'package:pharmacy_tracker/models/sale_bill.dart';
+import 'package:pharmacy_tracker/models/stock_adjustment.dart';
 import 'package:pharmacy_tracker/models/stock_item.dart';
 import 'package:pharmacy_tracker/models/supplier.dart';
 import 'package:pharmacy_tracker/models/supplier_payment.dart';
@@ -334,5 +337,57 @@ void main() {
   test('backup file name has the shop and date', () {
     expect(backupFileName('Cals Medical', DateTime(2026, 11, 5, 15, 7)),
         'PharmacyBackup-Cals-Medical-2026-11-05-1507.json');
+  });
+
+  test('write-offs are a loss in profit, returns are not', () {
+    final report = ProfitReport(
+      month: today,
+      sales: [
+        SaleBill(date: today, customerName: 'A', lines: [
+          SaleLine(stockId: 's1', name: 'Dolo 650', batch: 'B1', expiry: today,
+              quantity: 10, mrp: 105, gstPct: 5, costRate: 70), // profit 300
+        ]),
+      ],
+      expenses: [],
+      adjustments: [
+        StockAdjustment(type: adjustmentWriteOff, stockId: 's2', name: 'Syrup',
+            batch: 'S1', expiry: today, quantity: 2, costRate: 40, date: today), // -80
+        StockAdjustment(type: adjustmentReturn, stockId: 's3', name: 'Pan',
+            batch: 'P1', expiry: today, quantity: 5, costRate: 20, date: today),
+      ],
+    );
+    expect(report.writeOffsTotal, 80);
+    expect(report.returnsTotal, 100);
+    expect(round2(report.netProfit), 220); // 300 - 80, the return isn't a loss
+  });
+
+  test('restore turns backup dates back into Firestore dates', () {
+    final original = {
+      'name': 'Dolo 650',
+      'expiry': Timestamp.fromDate(DateTime(2027, 8, 31)),
+      'lines': [{'qty': 2}],
+    };
+    final back = fromJsonValue(jsonDecode(jsonEncode(toJsonValue(original)))) as Map;
+    expect(back['expiry'], Timestamp.fromDate(DateTime(2027, 8, 31)));
+    expect(back['name'], 'Dolo 650');
+    expect((back['lines'] as List).first['qty'], 2);
+  });
+
+  test('restore refuses files that are not backups', () {
+    Uint8List bytesOf(String s) => Uint8List.fromList(utf8.encode(s));
+    expect(() => parseBackup(bytesOf('hello')), throwsFormatException);
+    expect(() => parseBackup(bytesOf('{"app":"Other"}')), throwsFormatException);
+    final ok = parseBackup(bytesOf(
+        '{"app":"Pharmacy Tracker","backupVersion":1,"pharmacyId":"p1",'
+        '"pharmacyName":"Cals Medical","createdAt":"2026-11-05T15:10:00",'
+        '"collections":{"stock":{"a":{},"b":{}}}}'));
+    expect(ok.count('stock'), 2);
+    expect(ok.pharmacyName, 'Cals Medical');
+  });
+
+  test('restore plan: only missing records are added by default', () {
+    final plan = planCollection('stock', {'a': {}, 'b': {}, 'c': {}}, {'b', 'x'});
+    expect(plan.missing, ['a', 'c']);
+    expect(plan.existing, ['b']);
   });
 }
