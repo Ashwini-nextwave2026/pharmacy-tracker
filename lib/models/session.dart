@@ -7,6 +7,9 @@ class Session {
   final String pharmacyName;
   final String inviteCode;
   final String role; // 'owner' or 'staff'
+  // Every shop this person can open (the owner may have several).
+  // Always includes pharmacyId.
+  final List<String> shopIds;
 
   const Session({
     required this.uid,
@@ -15,7 +18,11 @@ class Session {
     required this.pharmacyName,
     required this.inviteCode,
     required this.role,
+    this.shopIds = const [],
   });
 
   bool get isOwner => role == 'owner';
+
+  // True when the owner has more than one shop (shows "All shops" options)
+  bool get hasManyShops => shopIds.length > 1;
 }

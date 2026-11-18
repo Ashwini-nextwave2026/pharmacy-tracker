@@ -39,10 +39,15 @@ class PharmacyService {
     return List.generate(6, (_) => chars[random.nextInt(chars.length)]).join();
   }
 
-  // ---- Owner creates a pharmacy ----
-  static Future<void> createPharmacy({
+  // ---- Owner creates a pharmacy (also used for a 2nd, 3rd shop) ----
+  // [alsoKeep]: the shop the owner already has, so both stay in their list.
+  // [shop]: starting shop details (e.g. the same GSTIN as the first shop).
+  // The new shop becomes the one that's open. Returns its id.
+  static Future<String> createPharmacy({
     required String pharmacyName,
     required String userName,
+    String? alsoKeep,
+    Map<String, dynamic>? shop,
   }) async {
     // Pick a code nobody else is using
     String code;
@@ -57,6 +62,7 @@ class PharmacyService {
       'ownerId': uid,
       'inviteCode': code,
       'createdAt': FieldValue.serverTimestamp(),
+      if (shop != null) 'shop': shop,
     });
     batch.set(membersRef(pRef.id).doc(uid), {
       'name': userName,
@@ -65,12 +71,39 @@ class PharmacyService {
       'joinedAt': FieldValue.serverTimestamp(),
     });
     batch.set(inviteRef(code), {'pharmacyId': pRef.id});
-    batch.set(userRef(), {
-      'name': userName,
-      'email': email,
-      'pharmacyId': pRef.id,
-    });
+    batch.set(
+      userRef(),
+      {
+        'name': userName,
+        'email': email,
+        'pharmacyId': pRef.id, // the shop that's open now
+        'pharmacyIds': FieldValue.arrayUnion([if (alsoKeep != null) alsoKeep, pRef.id]),
+      },
+      SetOptions(merge: true),
+    );
     await batch.commit(); // all four saved together, or none
+    return pRef.id;
+  }
+
+  // ---- Owner switches to another of their shops ----
+  // AccountGate is watching the user document, so the home screen
+  // reloads for the new shop by itself.
+  static Future<void> switchShop(String pharmacyId) =>
+      userRef().update({'pharmacyId': pharmacyId});
+
+  // Name and shop details of each of the owner's shops
+  static Future<List<({String id, String name, Map<String, dynamic> shop})>> shops(
+      List<String> ids) async {
+    final snaps = await Future.wait(ids.map((id) => pharmacyRef(id).get()));
+    return [
+      for (final s in snaps)
+        if (s.exists)
+          (
+            id: s.id,
+            name: (s.data()!['name'] as String?) ?? 'Pharmacy',
+            shop: (s.data()!['shop'] as Map?)?.cast<String, dynamic>() ?? {},
+          ),
+    ];
   }
 
   // ---- Staff joins with an invite code ----
@@ -228,6 +261,7 @@ class PharmacyService {
       pharmacyRef(pharmacyId).collection('sales');
 
   // Holds the last sale bill number, so numbers go S-0001, S-0002, ...
+  // (the letter is the shop's bill prefix)
   static DocumentReference<Map<String, dynamic>> saleCounterRef(
           String pharmacyId) =>
       pharmacyRef(pharmacyId).collection('counters').doc('sales');
@@ -241,6 +275,13 @@ class PharmacyService {
       // 1. Read everything first (Firestore requires reads before writes)
       final counterRef = saleCounterRef(pharmacyId);
       final counterSnap = await tx.get(counterRef);
+      // This shop's bill prefix (S, B, ...): each shop has its own series,
+      // so invoice numbers never repeat under the shared GSTIN
+      final pharmacySnap = await tx.get(pharmacyRef(pharmacyId));
+      final shop = (pharmacySnap.data()?['shop'] as Map?) ?? const {};
+      final prefix = ((shop['billPrefix'] as String?) ?? '').trim().isEmpty
+          ? 'S'
+          : (shop['billPrefix'] as String).trim().toUpperCase();
 
       // Add up quantity per batch, in case the same batch is on two lines
       final needed = <String, int>{};
@@ -269,7 +310,7 @@ class PharmacyService {
       // 3. Next bill number
       final last = (counterSnap.data()?['last'] as num?)?.toInt() ?? 0;
       final number = last + 1;
-      final billNumber = 'S-${number.toString().padLeft(4, '0')}';
+      final billNumber = '$prefix-${number.toString().padLeft(4, '0')}';
 
       // 4. Write: counter, stock, and the sale itself
       tx.set(counterRef, {'last': number});

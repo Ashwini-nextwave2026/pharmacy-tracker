@@ -9,6 +9,7 @@ import '../models/sale_bill.dart';
 import '../models/session.dart';
 import '../services/pharmacy_service.dart';
 import '../utils/format.dart';
+import '../widgets/shop_scope.dart';
 
 // Monthly GST filing report (owner only).
 // Pick a month; the app adds up that month's sales and purchases and lays
@@ -26,6 +27,7 @@ class _GstReportPageState extends State<GstReportPage> {
   // Start on LAST month: that's the one you usually file for
   DateTime month = DateTime(DateTime.now().year, DateTime.now().month - 1);
   Future<GstReport>? report;
+  bool allShops = false; // owner with 2+ shops: one GSTIN, file them together
 
   @override
   void initState() {
@@ -44,25 +46,27 @@ class _GstReportPageState extends State<GstReportPage> {
   void load() {
     final start = Timestamp.fromDate(DateTime(month.year, month.month));
     final end = Timestamp.fromDate(DateTime(month.year, month.month + 1));
-    final pid = widget.session.pharmacyId;
+    final pids = allShops ? widget.session.shopIds : [widget.session.pharmacyId];
 
     setState(() {
       report = () async {
-        final results = await Future.wait([
-          PharmacyService.salesRef(pid)
-              .where('date', isGreaterThanOrEqualTo: start)
-              .where('date', isLessThan: end)
-              .get(),
-          PharmacyService.billsRef(pid)
-              .where('billDate', isGreaterThanOrEqualTo: start)
-              .where('billDate', isLessThan: end)
-              .get(),
-        ]);
-        return GstReport(
-          month: month,
-          sales: results[0].docs.map(SaleBill.fromFirestore).toList(),
-          purchases: results[1].docs.map(PurchaseBill.fromFirestore).toList(),
-        );
+        final sales = <SaleBill>[];
+        final purchases = <PurchaseBill>[];
+        for (final pid in pids) {
+          final results = await Future.wait([
+            PharmacyService.salesRef(pid)
+                .where('date', isGreaterThanOrEqualTo: start)
+                .where('date', isLessThan: end)
+                .get(),
+            PharmacyService.billsRef(pid)
+                .where('billDate', isGreaterThanOrEqualTo: start)
+                .where('billDate', isLessThan: end)
+                .get(),
+          ]);
+          sales.addAll(results[0].docs.map(SaleBill.fromFirestore));
+          purchases.addAll(results[1].docs.map(PurchaseBill.fromFirestore));
+        }
+        return GstReport(month: month, sales: sales, purchases: purchases);
       }();
     });
   }
@@ -85,7 +89,7 @@ class _GstReportPageState extends State<GstReportPage> {
 
     final b = StringBuffer()
       ..writeln('*GST report: $monthName*')
-      ..writeln(widget.session.pharmacyName)
+      ..writeln(allShops ? 'All shops (same GSTIN)' : widget.session.pharmacyName)
       ..writeln('```')
       ..writeln('GSTR-1  B2C sales by rate')
       ..writeln(left('Rate', 6) + right('Taxable', 11) + right('CGST', 9) + right('SGST', 9))
@@ -107,7 +111,7 @@ class _GstReportPageState extends State<GstReportPage> {
     }
     b
       ..writeln(line)
-      ..writeln('Bills: ${r.firstBill} to ${r.lastBill} (${r.sales.length})')
+      ..writeln('Bills: ${r.billSeries.map((s) => '${s.from} to ${s.to} (${s.count})').join(', ')}')
       ..writeln()
       ..writeln('GSTR-3B')
       ..writeln(left('3.1(a) Taxable sales', 24) + right(m(r.salesTaxable), 11))
@@ -149,7 +153,7 @@ class _GstReportPageState extends State<GstReportPage> {
     b
       ..writeln()
       ..writeln('GSTR-1 documents issued,From,To,Count')
-      ..writeln('Invoices,${r.firstBill},${r.lastBill},${r.sales.length}')
+      ..writeln([for (final s in r.billSeries) 'Invoices,${s.from},${s.to},${s.count}'].join('\n'))
       ..writeln()
       ..writeln('GSTR-3B,IGST,CGST,SGST')
       ..writeln('3.1(a) Output tax (taxable ${m(r.salesTaxable)}),0.00,'
@@ -189,6 +193,14 @@ class _GstReportPageState extends State<GstReportPage> {
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
+              if (widget.session.hasManyShops)
+                ShopScopeToggle(
+                  allShops: allShops,
+                  onChanged: (v) {
+                    allShops = v;
+                    load();
+                  },
+                ),
               // 1. Month picker
               Card(
                 child: Row(
@@ -302,7 +314,8 @@ class _GstReportPageState extends State<GstReportPage> {
         'Documents issued (Table 13)',
         ['Type', 'From', 'To', 'Count'],
         [
-          ['Invoices', r.firstBill, r.lastBill, '${r.sales.length}'],
+          for (final s in r.billSeries) ['Invoices', s.from, s.to, '${s.count}'],
+          if (r.billSeries.isEmpty) ['Invoices', '-', '-', '0'],
         ],
       ),
 

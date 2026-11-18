@@ -22,6 +22,7 @@ import 'staff_page.dart';
 import 'supplier_dues_page.dart';
 import 'suppliers_page.dart';
 import 'stock_list_page.dart';
+import '../widgets/shop_switcher.dart';
 
 // The home screen, laid out like My Apps:
 // a teal welcome card, then Sale, Purchase and Reports sections,
@@ -102,14 +103,11 @@ class HomePage extends StatelessWidget {
           Colors.orange, () => open(context, AddStockPage(session: session))),
       _Tile('Returns', 'Return or write off', Icons.assignment_return,
           Colors.red, () => open(context, ReturnsPage(session: session))),
-      if (session.isOwner)
-        _Tile('Import Stock', 'Many from Excel', Icons.upload_file,
+      _Tile('Import Stock', 'Many from Excel', Icons.upload_file,
             Colors.green, () => open(context, ImportStockPage(session: session))),
-      if (session.isOwner)
-        _Tile('Supplier Dues', 'Pay suppliers', Icons.payments,
+      _Tile('Supplier Dues', 'Pay suppliers', Icons.payments,
             Colors.teal, () => open(context, SupplierDuesPage(session: session))),
-      if (session.isOwner)
-        _Tile('Expenditure', 'Rent, salary, bills', Icons.account_balance_wallet,
+      _Tile('Expenditure', 'Rent, salary, bills', Icons.account_balance_wallet,
             Colors.deepOrange, () => open(context, ExpensePage(session: session))),
     ];
     final reports = <_Tile>[
@@ -128,7 +126,23 @@ class HomePage extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Pharmacy Tracker'),
+        // Owner: tap the shop name to switch shop or add another one
+        title: session.isOwner
+            ? InkWell(
+                borderRadius: BorderRadius.circular(8),
+                onTap: () => showShopSwitcher(context, session),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Flexible(
+                      child: Text(session.pharmacyName,
+                          overflow: TextOverflow.ellipsis),
+                    ),
+                    const Icon(Icons.arrow_drop_down),
+                  ]),
+                ),
+              )
+            : const Text('Pharmacy Tracker'),
         actions: [
           if (session.isOwner)
             IconButton(

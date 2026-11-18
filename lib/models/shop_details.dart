@@ -7,6 +7,7 @@ class ShopDetails {
   String drugLicence; // Drug licence numbers, e.g. "20B: TS/HYD/2024/1234, 21B: ..."
   String upiId;
   String terms; // one condition per line
+  String billPrefix; // S, B, ...: each shop's own bill number series
 
   ShopDetails({
     this.address = '',
@@ -15,6 +16,7 @@ class ShopDetails {
     this.drugLicence = '',
     this.upiId = '',
     this.terms = defaultTerms,
+    this.billPrefix = 'S',
   });
 
   static const defaultTerms = 'Goods once sold will not be taken back.\n'
@@ -33,6 +35,7 @@ class ShopDetails {
         'drugLicence': drugLicence,
         'upiId': upiId,
         'terms': terms,
+        'billPrefix': billPrefix,
       };
 
   factory ShopDetails.fromMap(Map<String, dynamic>? map) {
@@ -45,6 +48,7 @@ class ShopDetails {
       drugLicence: s('drugLicence'),
       upiId: s('upiId'),
       terms: m['terms'] == null ? defaultTerms : s('terms'),
+      billPrefix: s('billPrefix').isEmpty ? 'S' : s('billPrefix'),
     );
   }
 }

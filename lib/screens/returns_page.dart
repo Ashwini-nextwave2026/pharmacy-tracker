@@ -173,7 +173,7 @@ class _HistoryTabState extends State<_HistoryTab> {
 
   @override
   Widget build(BuildContext context) {
-    final showMoney = widget.session.isOwner;
+    const showMoney = true; // staff handle returns and supplier dues too
     return Column(
       children: [
         PeriodChips(
@@ -378,7 +378,7 @@ class _AdjustStockPageState extends State<AdjustStockPage> {
               decoration: InputDecoration(
                 labelText: isReturn ? 'Quantity to return' : 'Quantity to write off',
                 border: const OutlineInputBorder(),
-                helperText: widget.session.isOwner && i.unitCost != null
+                helperText: i.unitCost != null
                     ? 'Value at cost: ${rupees.format(cost)}'
                     : null,
               ),

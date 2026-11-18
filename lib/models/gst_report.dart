@@ -86,6 +86,25 @@ class GstReport {
   List<String> get _sortedNumbers =>
       sales.map((s) => s.billNumber).toList()..sort();
 
+  // The same, per bill series: with two shops (S-0001…, B-0001…) each
+  // series is its own row in Table 13, e.g. ("S-0012", "S-0098", 87)
+  List<({String from, String to, int count})> get billSeries {
+    final bySeries = <String, List<String>>{};
+    for (final n in sales.map((s) => s.billNumber)) {
+      final series = n.contains('-') ? n.substring(0, n.indexOf('-')) : '';
+      bySeries.putIfAbsent(series, () => []).add(n);
+    }
+    final keys = bySeries.keys.toList()..sort();
+    return [
+      for (final k in keys)
+        (
+          from: (bySeries[k]!..sort()).first,
+          to: bySeries[k]!.last,
+          count: bySeries[k]!.length,
+        ),
+    ];
+  }
+
   // ---- Purchases (input tax credit, ITC) ----
 
   // GSTR-3B Table 4: tax paid on purchases, grouped by rate

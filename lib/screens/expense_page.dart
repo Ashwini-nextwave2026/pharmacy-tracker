@@ -159,7 +159,10 @@ class _ExpensePageState extends State<ExpensePage> {
                     for (final e in list)
                       Dismissible(
                         key: ValueKey(e.id),
-                        direction: DismissDirection.endToStart,
+                        // only the owner can delete an expense
+                        direction: widget.session.isOwner
+                            ? DismissDirection.endToStart
+                            : DismissDirection.none,
                         confirmDismiss: (_) => confirmDelete(e),
                         onDismissed: (_) => ref.doc(e.id).delete(),
                         background: Container(

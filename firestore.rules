@@ -66,9 +66,11 @@ service cloud.firestore {
         allow update, delete: if isOwner(pid);
       }
 
-      // Payments to suppliers: owner only (staff don't see money)
+      // Payments to suppliers: staff can see and record them (Supplier
+      // Dues); only the owner changes or deletes a saved payment
       match /payments/{paymentId} {
-        allow read, create, update, delete: if isOwner(pid);
+        allow read, create: if isMember(pid);
+        allow update, delete: if isOwner(pid);
       }
 
       // Supplier list: everyone in the pharmacy can see and add
@@ -82,12 +84,18 @@ service cloud.firestore {
       // (they take stock out); only the owner changes or deletes one
       match /adjustments/{adjustmentId} {
         allow read, create: if isMember(pid);
-        allow update, delete: if isOwner(pid);
+        // staff may only mark a return's credit as adjusted
+        allow update: if isOwner(pid) || (isMember(pid)
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['creditStatus', 'creditNoteNumber', 'paymentId']));
+        allow delete: if isOwner(pid);
       }
 
-      // Shop expenses: owner only
+      // Shop expenses: staff can see, add and correct them;
+      // only the owner deletes one
       match /expenses/{expenseId} {
-        allow read, create, update, delete: if isOwner(pid);
+        allow read, create, update: if isMember(pid);
+        allow delete: if isOwner(pid);
       }
 
       // Running bill numbers (S-0001, S-0002, ...)

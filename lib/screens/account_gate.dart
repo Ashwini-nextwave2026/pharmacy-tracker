@@ -70,6 +70,11 @@ class AccountGate extends StatelessWidget {
                 if (!pharmacySnap.hasData) return loading();
 
                 final pharmacy = pharmacySnap.data!.data() ?? {};
+                // All the owner's shops (older accounts only have the one)
+                final shopIds = <String>{
+                  pharmacyId,
+                  ...((user?['pharmacyIds'] as List?)?.cast<String>() ?? const []),
+                }.toList();
                 final session = Session(
                   uid: PharmacyService.uid,
                   userName: member['name'] ?? '',
@@ -77,6 +82,7 @@ class AccountGate extends StatelessWidget {
                   pharmacyName: pharmacy['name'] ?? 'Pharmacy',
                   inviteCode: pharmacy['inviteCode'] ?? '',
                   role: member['role'] ?? 'staff',
+                  shopIds: shopIds,
                 );
                 return HomePage(session: session);
               },

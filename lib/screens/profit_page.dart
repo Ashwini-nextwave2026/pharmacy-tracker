@@ -10,6 +10,7 @@ import '../models/stock_adjustment.dart';
 import '../models/stock_item.dart';
 import '../services/pharmacy_service.dart';
 import '../utils/format.dart';
+import '../widgets/shop_scope.dart';
 
 // Owner only: one month's profit
 // (sales - cost of medicines sold - expenses).
@@ -26,6 +27,7 @@ class _ProfitPageState extends State<ProfitPage> {
   // Start on THIS month (so far)
   DateTime month = DateTime(DateTime.now().year, DateTime.now().month);
   Future<ProfitReport>? report;
+  bool allShops = false; // owner with 2+ shops: profit of all shops together
 
   @override
   void initState() {
@@ -41,53 +43,63 @@ class _ProfitPageState extends State<ProfitPage> {
   }
 
   void load() {
-    final pid = widget.session.pharmacyId;
+    final pids = allShops ? widget.session.shopIds : [widget.session.pharmacyId];
     final start = Timestamp.fromDate(month);
     final end = Timestamp.fromDate(DateTime(month.year, month.month + 1));
 
     setState(() {
       report = () async {
-        final results = await Future.wait([
-          PharmacyService.salesRef(pid)
-              .where('date', isGreaterThanOrEqualTo: start)
-              .where('date', isLessThan: end)
-              .get(),
-          PharmacyService.expensesRef(pid)
-              .where('date', isGreaterThanOrEqualTo: start)
-              .where('date', isLessThan: end)
-              .get(),
-          PharmacyService.billsRef(pid)
-              .where('billDate', isGreaterThanOrEqualTo: start)
-              .where('billDate', isLessThan: end)
-              .get(),
-          PharmacyService.adjustmentsRef(pid)
-              .where('date', isGreaterThanOrEqualTo: start)
-              .where('date', isLessThan: end)
-              .get(),
-        ]);
-        final sales = results[0].docs.map(SaleBill.fromFirestore).toList();
-
-        // Older sale lines don't carry their cost: look it up from stock
-        final missing = <String>{
-          for (final s in sales)
-            for (final l in s.lines)
-              if (l.costRate == null && l.stockId.isNotEmpty) l.stockId,
-        };
+        final sales = <SaleBill>[];
+        final expenses = <Expense>[];
+        final purchases = <PurchaseBill>[];
+        final adjustments = <StockAdjustment>[];
         final stockCosts = <String, double>{};
-        final snaps = await Future.wait(
-            missing.map((id) => PharmacyService.stockRef(pid).doc(id).get()));
-        for (final snap in snaps) {
-          if (!snap.exists) continue;
-          final cost = StockItem.fromFirestore(snap).unitCost;
-          if (cost != null) stockCosts[snap.id] = cost;
+        for (final pid in pids) {
+          final results = await Future.wait([
+            PharmacyService.salesRef(pid)
+                .where('date', isGreaterThanOrEqualTo: start)
+                .where('date', isLessThan: end)
+                .get(),
+            PharmacyService.expensesRef(pid)
+                .where('date', isGreaterThanOrEqualTo: start)
+                .where('date', isLessThan: end)
+                .get(),
+            PharmacyService.billsRef(pid)
+                .where('billDate', isGreaterThanOrEqualTo: start)
+                .where('billDate', isLessThan: end)
+                .get(),
+            PharmacyService.adjustmentsRef(pid)
+                .where('date', isGreaterThanOrEqualTo: start)
+                .where('date', isLessThan: end)
+                .get(),
+          ]);
+          final shopSales = results[0].docs.map(SaleBill.fromFirestore).toList();
+
+          // Older sale lines don't carry their cost: look it up from stock
+          final missing = <String>{
+            for (final s in shopSales)
+              for (final l in s.lines)
+                if (l.costRate == null && l.stockId.isNotEmpty) l.stockId,
+          };
+          final snaps = await Future.wait(
+              missing.map((id) => PharmacyService.stockRef(pid).doc(id).get()));
+          for (final snap in snaps) {
+            if (!snap.exists) continue;
+            final cost = StockItem.fromFirestore(snap).unitCost;
+            if (cost != null) stockCosts[snap.id] = cost;
+          }
+          sales.addAll(shopSales);
+          expenses.addAll(results[1].docs.map(Expense.fromFirestore));
+          purchases.addAll(results[2].docs.map(PurchaseBill.fromFirestore));
+          adjustments.addAll(results[3].docs.map(StockAdjustment.fromFirestore));
         }
 
         return ProfitReport(
           month: month,
           sales: sales,
-          expenses: results[1].docs.map(Expense.fromFirestore).toList(),
-          purchases: results[2].docs.map(PurchaseBill.fromFirestore).toList(),
-          adjustments: results[3].docs.map(StockAdjustment.fromFirestore).toList(),
+          expenses: expenses,
+          purchases: purchases,
+          adjustments: adjustments,
           stockCosts: stockCosts,
         );
       }();
@@ -108,6 +120,14 @@ class _ProfitPageState extends State<ProfitPage> {
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
+              if (widget.session.hasManyShops)
+                ShopScopeToggle(
+                  allShops: allShops,
+                  onChanged: (v) {
+                    allShops = v;
+                    load();
+                  },
+                ),
               // 1. Month picker
               Card(
                 child: Row(children: [

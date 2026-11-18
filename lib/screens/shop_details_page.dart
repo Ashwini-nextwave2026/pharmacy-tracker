@@ -25,7 +25,8 @@ class _ShopDetailsPageState extends State<ShopDetailsPage> {
     ('address', 'Shop address', 'Shop no, street, area, Hyderabad, Telangana - 500008', 3),
     ('phone', 'Phone / mobile', '+91 98xxxxxxxx', 1),
     ('gstin', 'GSTIN', '36ABCDE1234F1Z5', 1),
-    ('drugLicence', 'Drug licence numbers', '20B: TS/HYD/2024/xxxx, 21B: TS/HYD/2024/xxxx', 2),
+    ('drugLicence', 'Drug licence numbers (this shop only)', '20B: TS/HYD/2024/xxxx, 21B: TS/HYD/2024/xxxx', 2),
+    ('billPrefix', 'Bill number prefix (e.g. S → S-0001)', 'S', 1),
     ('upiId', 'UPI ID for the scan-to-pay QR (optional)', 'shopname@okhdfcbank', 1),
     ('terms', 'Terms & conditions (one per line)', '', 4),
   ];
@@ -69,7 +70,20 @@ class _ShopDetailsPageState extends State<ShopDetailsPage> {
       for (final f in fields) f.$1: c[f.$1]!.text.trim(),
     });
     shop.gstin = shop.gstin.toUpperCase();
+    shop.billPrefix = shop.billPrefix.toUpperCase();
     try {
+      // With more than one shop: drug licence and bill prefix must differ,
+      // the GSTIN is the same for all shops
+      if (widget.session.hasManyShops) {
+        final problem = await _checkOtherShops(shop);
+        if (problem != null) {
+          if (!mounted) return;
+          setState(() => saving = false);
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text(problem)));
+          return;
+        }
+      }
       await PharmacyService.pharmacyRef(widget.session.pharmacyId)
           .update({'shop': shop.toMap()});
       if (!mounted) return;
@@ -83,6 +97,24 @@ class _ShopDetailsPageState extends State<ShopDetailsPage> {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Could not save: $e')));
     }
+  }
+
+  // Returns a message if another shop already uses this licence or prefix
+  Future<String?> _checkOtherShops(ShopDetails shop) async {
+    String clean(String s) => s.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '');
+    final others = (await PharmacyService.shops(widget.session.shopIds))
+        .where((s) => s.id != widget.session.pharmacyId);
+    for (final o in others) {
+      final theirs = ShopDetails.fromMap(o.shop);
+      if (shop.drugLicence.isNotEmpty &&
+          clean(theirs.drugLicence) == clean(shop.drugLicence)) {
+        return '${o.name} already has this drug licence. Each shop needs its own.';
+      }
+      if (theirs.billPrefix.toUpperCase() == shop.billPrefix) {
+        return '${o.name} already uses bill prefix ${shop.billPrefix}. Choose another letter.';
+      }
+    }
+    return null;
   }
 
   @override
@@ -100,12 +132,21 @@ class _ShopDetailsPageState extends State<ShopDetailsPage> {
                       style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
                   const Text('These details print on every Tax Invoice.',
                       style: TextStyle(color: Colors.grey)),
+                  if (widget.session.hasManyShops)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 6),
+                      child: Text(
+                        'You have more than one shop: use the same GSTIN, but this '
+                        "shop's own drug licence and bill prefix.",
+                        style: TextStyle(color: Colors.teal),
+                      ),
+                    ),
                   const SizedBox(height: 16),
                   for (final f in fields) ...[
                     TextFormField(
                       controller: c[f.$1],
                       maxLines: f.$4,
-                      textCapitalization: f.$1 == 'gstin'
+                      textCapitalization: f.$1 == 'gstin' || f.$1 == 'billPrefix'
                           ? TextCapitalization.characters
                           : TextCapitalization.sentences,
                       keyboardType: f.$1 == 'phone' ? TextInputType.phone : null,
@@ -119,6 +160,10 @@ class _ShopDetailsPageState extends State<ShopDetailsPage> {
                         final t = v?.trim() ?? '';
                         if (f.$1 == 'gstin' && t.isNotEmpty && t.length != 15) {
                           return 'A GSTIN has 15 characters';
+                        }
+                        if (f.$1 == 'billPrefix' &&
+                            !RegExp(r'^[A-Za-z]{1,3}$').hasMatch(t)) {
+                          return '1 to 3 letters, e.g. S or B';
                         }
                         return null;
                       },
