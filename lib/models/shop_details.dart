@@ -8,6 +8,7 @@ class ShopDetails {
   String upiId;
   String terms; // one condition per line
   String billPrefix; // S, B, ...: each shop's own bill number series
+  String doctor; // filled in on every new sale bill (can be changed there)
 
   ShopDetails({
     this.address = '',
@@ -17,6 +18,7 @@ class ShopDetails {
     this.upiId = '',
     this.terms = defaultTerms,
     this.billPrefix = 'S',
+    this.doctor = '',
   });
 
   static const defaultTerms = 'Goods once sold will not be taken back.\n'
@@ -36,6 +38,7 @@ class ShopDetails {
         'upiId': upiId,
         'terms': terms,
         'billPrefix': billPrefix,
+        'doctor': doctor,
       };
 
   factory ShopDetails.fromMap(Map<String, dynamic>? map) {
@@ -49,6 +52,7 @@ class ShopDetails {
       upiId: s('upiId'),
       terms: m['terms'] == null ? defaultTerms : s('terms'),
       billPrefix: s('billPrefix').isEmpty ? 'S' : s('billPrefix'),
+      doctor: s('doctor'),
     );
   }
 }

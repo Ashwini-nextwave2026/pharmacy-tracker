@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/sale_bill.dart';
+import '../models/shop_details.dart';
 import '../models/session.dart';
 import '../services/pharmacy_service.dart';
 import '../utils/format.dart';
@@ -39,6 +40,26 @@ class _NewSalePageState extends State<NewSalePage> {
         lines: lines,
         soldBy: widget.session.userName,
       );
+
+  @override
+  void initState() {
+    super.initState();
+    loadDoctor();
+  }
+
+  // The shop's doctor (Shop details) is filled in; change it for a bill
+  // from another doctor, or clear it
+  Future<void> loadDoctor() async {
+    try {
+      final snap = await PharmacyService.pharmacyRef(widget.session.pharmacyId).get();
+      final shop = ShopDetails.fromMap(
+          (snap.data()?['shop'] as Map?)?.cast<String, dynamic>());
+      if (!mounted || shop.doctor.isEmpty || doctorController.text.isNotEmpty) return;
+      setState(() => doctorController.text = shop.doctor);
+    } catch (_) {
+      // offline or no access: the box just stays empty
+    }
+  }
 
   @override
   void dispose() {

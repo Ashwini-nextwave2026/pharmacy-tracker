@@ -19,6 +19,8 @@ class _ShopDetailsPageState extends State<ShopDetailsPage> {
   final c = <String, TextEditingController>{};
   bool loading = true;
   bool saving = false;
+  // The shop's name: shown in the app and printed on every invoice
+  final nameController = TextEditingController();
 
   // Each box: key in Firestore, label, hint, how many lines
   static const fields = [
@@ -27,6 +29,7 @@ class _ShopDetailsPageState extends State<ShopDetailsPage> {
     ('gstin', 'GSTIN', '36ABCDE1234F1Z5', 1),
     ('drugLicence', 'Drug licence numbers (this shop only)', '20B: TS/HYD/2024/xxxx, 21B: TS/HYD/2024/xxxx', 2),
     ('billPrefix', 'Bill number prefix (e.g. S → S-0001)', 'S', 1),
+    ('doctor', 'Doctor on every bill (can be changed on the bill)', 'Dr Chetan Mahajan', 1),
     ('upiId', 'UPI ID for the scan-to-pay QR (optional)', 'shopname@okhdfcbank', 1),
     ('terms', 'Terms & conditions (one per line)', '', 4),
   ];
@@ -45,6 +48,7 @@ class _ShopDetailsPageState extends State<ShopDetailsPage> {
     for (final controller in c.values) {
       controller.dispose();
     }
+    nameController.dispose();
     super.dispose();
   }
 
@@ -56,6 +60,8 @@ class _ShopDetailsPageState extends State<ShopDetailsPage> {
     final map = shop.toMap();
     if (!mounted) return;
     setState(() {
+      nameController.text =
+          (snap.data()?['name'] as String?) ?? widget.session.pharmacyName;
       for (final f in fields) {
         c[f.$1]!.text = map[f.$1] as String? ?? '';
       }
@@ -85,7 +91,10 @@ class _ShopDetailsPageState extends State<ShopDetailsPage> {
         }
       }
       await PharmacyService.pharmacyRef(widget.session.pharmacyId)
-          .update({'shop': shop.toMap()});
+          .update({
+        'name': nameController.text.trim(), // the app bar updates by itself
+        'shop': shop.toMap(),
+      });
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Shop details saved. They will show on every invoice.')),
@@ -128,8 +137,18 @@ class _ShopDetailsPageState extends State<ShopDetailsPage> {
               child: ListView(
                 padding: const EdgeInsets.all(20),
                 children: [
-                  Text(widget.session.pharmacyName,
-                      style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                  TextFormField(
+                    controller: nameController,
+                    textCapitalization: TextCapitalization.characters,
+                    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                    decoration: const InputDecoration(
+                      labelText: 'Shop name',
+                      border: OutlineInputBorder(),
+                    ),
+                    validator: (v) =>
+                        (v ?? '').trim().isEmpty ? 'Enter the shop name' : null,
+                  ),
+                  const SizedBox(height: 6),
                   const Text('These details print on every Tax Invoice.',
                       style: TextStyle(color: Colors.grey)),
                   if (widget.session.hasManyShops)

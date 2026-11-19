@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:printing/printing.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/sale_bill.dart';
 import '../models/session.dart';
 import '../models/shop_details.dart';
@@ -369,24 +371,50 @@ class SaleDetailPage extends StatelessWidget {
   }
 
   // WhatsApp: send the Tax Invoice PDF itself, not a text message.
-  // On a phone the share screen opens: tap WhatsApp, then the customer.
-  // (WhatsApp can't open a chosen chat with a file attached.)
-  // In a browser the PDF downloads, ready to attach in WhatsApp.
+  //  1. Share the PDF FILE: on a phone the share screen opens (tap
+  //     WhatsApp, then the customer); in Chrome on Windows the Windows
+  //     share window opens (pick WhatsApp if the WhatsApp app is installed).
+  //  2. If this browser can't share files: download the PDF and open the
+  //     customer's WhatsApp chat, so it only needs attaching (📎).
+  // (WhatsApp itself never lets an app open a chat WITH a file attached.)
   Future<void> shareWhatsApp(BuildContext context, SaleBill sale) async {
+    final messenger = ScaffoldMessenger.of(context);
     try {
       final bytes = await invoicePdf(sale);
-      await Printing.sharePdf(
-        bytes: bytes,
-        filename: 'Invoice-${sale.billNumber}.pdf',
-        subject: 'Tax Invoice ${sale.billNumber} - ${session.pharmacyName}',
-        body: 'Tax Invoice ${sale.billNumber}, total ${rupees.format(sale.total)}. '
-            'Thank you! Get well soon.',
-      );
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Could not send invoice: $e')));
+      final name = 'Invoice-${sale.billNumber}.pdf';
+      final message = 'Tax Invoice ${sale.billNumber}, total '
+          '${rupees.format(sale.total)}. Thank you! Get well soon.';
+
+      // 1. Share the file itself
+      try {
+        final result = await SharePlus.instance.share(ShareParams(
+          files: [XFile.fromData(bytes, name: name, mimeType: 'application/pdf')],
+          fileNameOverrides: [name],
+          text: message,
+          subject: 'Tax Invoice ${sale.billNumber} - ${session.pharmacyName}',
+          downloadFallbackEnabled: false, // we handle that below
+          mailToFallbackEnabled: false,
+        ));
+        if (result.status != ShareResultStatus.unavailable) return;
+      } catch (_) {
+        // this browser can't share files: fall through
       }
+
+      // 2. Download the PDF + open the customer's chat in WhatsApp
+      await Printing.sharePdf(bytes: bytes, filename: name);
+      var phone = sale.customerPhone.replaceAll(RegExp(r'[^0-9]'), '');
+      if (phone.length == 10) phone = '91$phone'; // Indian mobile
+      final chat = Uri.https('wa.me', phone.isEmpty ? '/' : '/$phone',
+          {'text': '$message Invoice attached.'});
+      await launchUrl(chat, mode: LaunchMode.externalApplication);
+      messenger.showSnackBar(SnackBar(
+        duration: const Duration(seconds: 10),
+        content: Text('Invoice downloaded. In the WhatsApp chat, tap 📎 and '
+            'attach $name from Downloads.'),
+      ));
+    } catch (e) {
+      messenger.showSnackBar(
+          SnackBar(content: Text('Could not send invoice: $e')));
     }
   }
 

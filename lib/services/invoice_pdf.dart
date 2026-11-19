@@ -285,7 +285,6 @@ Future<Uint8List> buildInvoicePdf({
         text('For $shopName', bold: true, align: pw.TextAlign.right),
         pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.end, children: [
           text('Authorised Signatory', bold: true),
-          if (sale.soldBy.isNotEmpty) text('Billed by: ${sale.soldBy}', size: 7),
         ]),
       ],
     ),

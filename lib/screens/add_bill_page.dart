@@ -5,6 +5,8 @@ import '../models/purchase_bill.dart';
 import '../models/session.dart';
 import '../models/stock_item.dart';
 import '../models/supplier.dart';
+import 'package:share_plus/share_plus.dart';
+import '../services/bill_ocr.dart';
 import '../services/pharmacy_service.dart';
 import '../utils/format.dart';
 import '../widgets/gst_summary.dart';
@@ -72,6 +74,87 @@ class _AddBillPageState extends State<AddBillPage> {
         .get();
     if (mounted) {
       setState(() => suppliers = snap.docs.map(Supplier.fromFirestore).toList());
+    }
+  }
+
+  bool scanning = false;
+  List<String> scanWarnings = []; // shown above the items until saved
+  String scanDebug = ''; // what the scanner read, to send to the developer
+
+  // 📷 Scan a paper bill: take (or choose) a photo of it, read it on the
+  // phone with Google ML Kit, and fill this form. Nothing is saved: the
+  // user checks every line and presses Save.
+  Future<void> scanPaperBill() async {
+    if (!billScanSupported) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Bill scanning works in the Android app (APK), '
+              'not in Chrome.')));
+      return;
+    }
+    final source = await showModalBottomSheet<BillSource>(
+      context: context,
+      builder: (sheet) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(
+            leading: const Icon(Icons.photo_camera),
+            title: const Text('Take a photo of the bill'),
+            subtitle: const Text('Flat, in good light, whole bill in view'),
+            onTap: () => Navigator.pop(sheet, BillSource.camera),
+          ),
+          ListTile(
+            leading: const Icon(Icons.photo_library),
+            title: const Text('Choose a photo from the gallery'),
+            onTap: () => Navigator.pop(sheet, BillSource.gallery),
+          ),
+          ListTile(
+            leading: const Icon(Icons.picture_as_pdf),
+            title: const Text('Choose a PDF bill'),
+            subtitle: const Text('e.g. one the distributor sent on WhatsApp'),
+            onTap: () => Navigator.pop(sheet, BillSource.pdf),
+          ),
+        ]),
+      ),
+    );
+    if (source == null || !mounted) return;
+
+    setState(() => scanning = true);
+    try {
+      final scan = await scanBill(source);
+      if (scan == null || !mounted) return;
+
+      // Supplier: use the saved one if the GSTIN or name matches
+      final match = suppliers.where((s) =>
+          (scan.supplierGstin.isNotEmpty &&
+              s.gstin.toUpperCase() == scan.supplierGstin) ||
+          nameKey(s.name) == nameKey(scan.supplier));
+      if (match.isNotEmpty) useSupplier(match.first);
+      setState(() {
+        if (match.isEmpty) {
+          supplierController.text = scan.supplier;
+          gstinController.text = scan.supplierGstin;
+          if (scan.supplierGstin.length >= 2) {
+            interState = !scan.supplierGstin.startsWith('36'); // Telangana = 36
+          }
+        }
+        if (scan.billNumber.isNotEmpty) billNumberController.text = scan.billNumber;
+        if (scan.billDate != null) billDate = scan.billDate!;
+        lines.addAll(scan.lines);
+        scanWarnings = scan.warnings;
+        scanDebug = scan.debugText;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        duration: const Duration(seconds: 6),
+        content: Text('Read ${scan.lines.length} item${scan.lines.length == 1 ? '' : 's'} '
+            'from the bill. Check each line against the paper, then Save.'),
+      ));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        duration: const Duration(seconds: 8),
+        content: Text('Could not read the bill: $e'),
+      ));
+    } finally {
+      if (mounted) setState(() => scanning = false);
     }
   }
 
@@ -223,6 +306,50 @@ class _AddBillPageState extends State<AddBillPage> {
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
+            // 0. Fill everything from a photo of the paper bill
+            OutlinedButton.icon(
+              onPressed: scanning ? null : scanPaperBill,
+              icon: scanning
+                  ? const SizedBox(
+                      width: 18, height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.document_scanner),
+              label: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Text(scanning
+                    ? 'Reading the bill…'
+                    : 'Scan bill (photo or PDF) to fill automatically'),
+              ),
+            ),
+            if (scanWarnings.isNotEmpty)
+              Card(
+                color: Colors.orange.withValues(alpha: 0.12),
+                margin: const EdgeInsets.only(top: 8),
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Please check',
+                          style: TextStyle(fontWeight: FontWeight.bold)),
+                      for (final w in scanWarnings) Text('• $w'),
+                      if (scanDebug.isNotEmpty)
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: TextButton.icon(
+                            icon: const Icon(Icons.share, size: 18),
+                            label: const Text('Send scan details'),
+                            onPressed: () => SharePlus.instance.share(ShareParams(
+                              text: scanDebug,
+                              subject: 'Bill scan details',
+                            )),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            const SizedBox(height: 16),
             // 1. Supplier details
             // Type to search the supplier list; pick one to fill GSTIN etc.
             RawAutocomplete<Supplier>(
